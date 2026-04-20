@@ -44,12 +44,13 @@ static BOOL kShowUnreadBadge = YES;
 - (NSArray *)getContactListByLabelName:(NSString *)labelName;
 @end
 
-@interface BaseMsgContentViewController : UIViewController
-@end
-
 @interface NewMainFrameViewController : UIViewController
 @property (nonatomic, strong) UITableView *m_tableView;
 - (void)reloadSessionData;
+// 声明新增的方法
+- (void)reloadTagGroupData;
+- (NSInteger)calculateUnreadCount;
+- (void)openChatSessionWithUsrName:(NSString *)usrName;
 @end
 
 @interface WCTagGroupHeaderView : UIView
@@ -61,7 +62,6 @@ static BOOL kShowUnreadBadge = YES;
 @end
 
 @implementation WCTagGroupHeaderView
-
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
@@ -69,7 +69,6 @@ static BOOL kShowUnreadBadge = YES;
     }
     return self;
 }
-
 @end
 
 @interface WCTagGroupSessionCell : UITableViewCell
@@ -195,7 +194,15 @@ static BOOL _isTagGroupExpanded = NO;
 
 %new
 - (void)openChatSessionWithUsrName:(NSString *)usrName {
-    [[NSClassFromString(@"CContactMgr") defaultCContactMgr] openChatSessionViewController:usrName];
+    // 打开聊天页面
+    Class msgControllerClass = NSClassFromString(@"MessageViewController");
+    if (msgControllerClass) {
+        UIViewController *msgVC = [[msgControllerClass alloc] init];
+        if ([msgVC respondsToSelector:@selector(setValue:forKey:)]) {
+            [msgVC setValue:usrName forKey:@"m_nsUsrName"];
+        }
+        [self.navigationController pushViewController:msgVC animated:YES];
+    }
 }
 
 %end
