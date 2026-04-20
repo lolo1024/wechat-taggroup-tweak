@@ -1,4 +1,4 @@
-PACKAGE_NAME = com.yourname.wechattaggroup
+Package = com.yourname.wechattaggroup
 TWEAK_NAME = WeChatTagGroup
 DISPLAY_NAME = 微信标签分组
 AUTHOR = YourName
