@@ -1,5 +1,5 @@
 /**
- * WeChat Tag Group - 功能版 v18
+ * WeChat Tag Group - 功能版 v19
  * 在聊天列表顶部显示"客户"标签联系人
  * 点击可快速发起聊天
  */
@@ -334,9 +334,9 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, CGFloat viewW
     %orig;
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        // 使用 id 类型避免前向声明问题
-        id _self = self;
-        UIView *myView = _self.view;
+        // 强制转换为 UIViewController 以访问 view 属性
+        UIViewController *vc = (UIViewController *)self;
+        UIView *myView = vc.view;
         if (!myView) return;
         
         // 检查是否已经添加过
@@ -381,8 +381,8 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, CGFloat viewW
     %orig;
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        id _self = self;
-        UIView *myView = _self.view;
+        UIViewController *vc = (UIViewController *)self;
+        UIView *myView = vc.view;
         if (!myView) return;
         
         UIView *existingView = [myView viewWithTag:20240421];
@@ -413,5 +413,5 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, CGFloat viewW
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] v18功能版已加载 - 标签: %@", kTargetTagName);
+    NSLog(@"[WeChatTagGroup] v19功能版已加载 - 标签: %@", kTargetTagName);
 }
