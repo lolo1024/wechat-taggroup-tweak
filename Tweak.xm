@@ -1,5 +1,5 @@
 /**
- * WeChat Tag Group - 功能版 v16
+ * WeChat Tag Group - 功能版 v17
  * 在聊天列表顶部显示"客户"标签联系人
  * 点击可快速发起聊天
  */
@@ -62,7 +62,6 @@ static id safeCallNoArg(id obj, SEL selector) {
 
 #pragma mark - 获取联系人数据
 
-// 获取联系人信息的结构体
 @interface TagContact : NSObject
 @property (nonatomic, strong) NSString *wxid;
 @property (nonatomic, strong) NSString *nickName;
@@ -72,12 +71,10 @@ static id safeCallNoArg(id obj, SEL selector) {
 @implementation TagContact
 @end
 
-// 获取指定标签的联系人列表
 static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
     NSMutableArray<TagContact *> *result = [NSMutableArray array];
     
     @try {
-        // 获取服务
         Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
         Class contactMgrClass = NSClassFromString(@"CContactMgr");
         Class tagMgrClass = NSClassFromString(@"ContactTagMgr");
@@ -101,7 +98,6 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
         
         if (!contactMgr || !tagMgr) return result;
         
-        // 获取该标签的所有联系人wxid
         SEL getContactsSel = NSSelectorFromString(@"getContactsForTagName:");
         if (![tagMgr respondsToSelector:getContactsSel]) return result;
         
@@ -112,7 +108,6 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
         
         if (!wxidArray || ![wxidArray isKindOfClass:[NSArray class]]) return result;
         
-        // 获取每个联系人的详情
         SEL getContactSel = NSSelectorFromString(@"getContactByName:");
         
         for (NSString *wxid in wxidArray) {
@@ -127,7 +122,6 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
             #pragma clang diagnostic pop
             
             if (contactObj) {
-                // 获取昵称
                 for (NSString *method in @[@"getNickName", @"nickName", @"m_nsNickName"]) {
                     #pragma clang diagnostic push
                     #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
@@ -139,7 +133,6 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
                     }
                 }
                 
-                // 获取备注
                 for (NSString *method in @[@"getRemark", @"m_nsRemark", @"remark"]) {
                     #pragma clang diagnostic push
                     #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
@@ -152,7 +145,6 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
                 }
             }
             
-            // 如果没有备注，用昵称代替
             if (!contact.remark || [contact.remark length] == 0) {
                 contact.remark = contact.nickName;
             }
@@ -169,12 +161,10 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
 
 #pragma mark - 打开聊天
 
-// 打开与指定联系人的聊天
 static void openChatWithContact(NSString *wxid) {
     if (!wxid || [wxid length] == 0) return;
     
     @try {
-        // 获取 CMessageMgr
         Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
         if (!serviceCenterClass) return;
         
@@ -195,7 +185,6 @@ static void openChatWithContact(NSString *wxid) {
         
         if (!msgMgr) return;
         
-        // 尝试调用 openChatViewControllerWithUsername: 方法
         SEL openChatSel = NSSelectorFromString(@"openChatViewControllerWithUsername:");
         if ([msgMgr respondsToSelector:openChatSel]) {
             #pragma clang diagnostic push
@@ -212,18 +201,17 @@ static void openChatWithContact(NSString *wxid) {
 
 #pragma mark - 创建标签分组视图
 
-// 创建联系人头像+名字的视图
-static UIView *createContactCell(TagContact *contact, CGFloat width) {
+static UIView *createContactCell(TagContact *contact, CGFloat width, NSString *tagId) {
     UIView *cellView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 80)];
+    cellView.tag = [tagId hash];
     
     // 头像
     UIImageView *avatarView = [[UIImageView alloc] initWithFrame:CGRectMake((width - 50) / 2, 5, 50, 50)];
-    avatarView.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0]; // 微信绿
+    avatarView.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
     avatarView.layer.cornerRadius = 25;
     avatarView.layer.masksToBounds = YES;
     avatarView.contentMode = UIViewContentModeCenter;
     
-    // 头像文字（取昵称首字）
     NSString *firstChar = @"?";
     if (contact.nickName && [contact.nickName length] > 0) {
         unichar c = [contact.nickName characterAtIndex:0];
@@ -239,7 +227,6 @@ static UIView *createContactCell(TagContact *contact, CGFloat width) {
     
     [cellView addSubview:avatarView];
     
-    // 名字标签（只显示备注的前6个字）
     NSString *displayName = contact.remark;
     if (!displayName || [displayName length] == 0) {
         displayName = contact.nickName;
@@ -257,24 +244,15 @@ static UIView *createContactCell(TagContact *contact, CGFloat width) {
     nameLabel.textColor = [UIColor darkGrayColor];
     nameLabel.font = [UIFont systemFontOfSize:11];
     nameLabel.textAlignment = NSTextAlignmentCenter;
+    nameLabel.tag = 100;
     [cellView addSubview:nameLabel];
-    
-    // 点击手势
-    cellView.userInteractionEnabled = YES;
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:NULL];
-    [cellView addGestureRecognizer:tap];
-    
-    // 关联数据
-    objc_setAssociatedObject(tap, "contact", contact, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     
     return cellView;
 }
 
-// 创建标签分组视图
-static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *parentView) {
+static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *parentView, NSString *tagId) {
     if (!contacts || contacts.count == 0) return nil;
     
-    // 主容器（白色背景，有阴影）
     CGFloat cellWidth = 70;
     CGFloat cellSpacing = 10;
     CGFloat padding = 15;
@@ -302,7 +280,7 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:14];
     [closeBtn setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
     closeBtn.frame = CGRectMake(parentView.frame.size.width - 35, 8, 25, 25);
-    [closeBtn addTarget:nil action:@selector(hideTagGroupView) forControlEvents:UIControlEventTouchUpInside];
+    closeBtn.tag = 999;
     [container addSubview:closeBtn];
     
     // 水平滚动视图
@@ -316,13 +294,14 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
     CGFloat x = padding;
     for (NSInteger i = 0; i < contacts.count; i++) {
         TagContact *contact = contacts[i];
-        UIView *cell = createContactCell(contact, cellWidth);
+        UIView *cell = createContactCell(contact, cellWidth, contact.wxid);
         cell.frame = CGRectMake(x, 5, cellWidth, 80);
         
-        // 点击手势
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:@selector(tagContactTapped:)];
+        // 点击手势 - 存储wxid到cell的accessibilityIdentifier
+        cell.accessibilityIdentifier = contact.wxid;
+        
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:cell action:@selector(handleTap:)];
         [cell addGestureRecognizer:tap];
-        objc_setAssociatedObject(tap, "wxid", contact.wxid, OBJC_ASSOCIATION_COPY_NONATOMIC);
         
         [scrollView addSubview:cell];
         x += cellWidth + cellSpacing;
@@ -330,15 +309,36 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
     
     scrollView.contentSize = CGSizeMake(x, scrollHeight);
     
-    // 设置容器大小
     container.frame = CGRectMake(0, 0, parentView.frame.size.width, 35 + scrollHeight + 10);
     
     return container;
 }
 
-#pragma mark - 注入到聊天列表
+#pragma mark - Cell点击处理
 
-%hook NewMainFrameViewController
+@interface UIView (TagGroupTap)
+- (void)handleTap:(UITapGestureRecognizer *)tap;
+@end
+
+@implementation UIView (TagGroupTap)
+
+- (void)handleTap:(UITapGestureRecognizer *)tap {
+    @try {
+        NSString *wxid = self.accessibilityIdentifier;
+        if (wxid && [wxid length] > 0) {
+            NSLog(@"[WeChatTagGroup] 点击了联系人: %@", wxid);
+            openChatWithContact(wxid);
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[WeChatTagGroup] handleTap error: %@", e);
+    }
+}
+
+@end
+
+#pragma mark - Hook NewMainFrameViewController
+
+%hook NSClassFromString(@"NewMainFrameViewController")
 
 - (void)viewDidLoad {
     %orig;
@@ -351,7 +351,6 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
     
-    // 每次显示时刷新标签视图
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         [self refreshTagGroupView];
     });
@@ -360,29 +359,27 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
 %new
 - (void)injectTagGroupView {
     @try {
-        // 检查是否已经添加过
         UIView *existingView = [self.view viewWithTag:20240421];
         if (existingView) return;
         
-        // 获取标签联系人
         NSArray<TagContact *> *contacts = getContactsForTag(kTargetTagName);
         if (!contacts || contacts.count == 0) {
             NSLog(@"[WeChatTagGroup] 没有找到联系人");
             return;
         }
         
-        // 创建标签分组视图
-        UIView *tagView = createTagGroupView(contacts, self.view);
+        UIView *tagView = createTagGroupView(contacts, self.view, kTargetTagName);
         if (!tagView) return;
         
-        // 设置tag以便后续找到
         tagView.tag = 20240421;
         
-        // 添加到视图顶部
-        tagView.frame = CGRectMake(0, 0, self.view.frame.size.width, tagView.frame.size.height);
-        [self.view addSubview:tagView];
+        // 关闭按钮事件
+        UIButton *closeBtn = [tagView viewWithTag:999];
+        if (closeBtn) {
+            [closeBtn addTarget:self action:@selector(hideTagGroupView) forControlEvents:UIControlEventTouchUpInside];
+        }
         
-        // 将tableView往下移动
+        [self.view addSubview:tagView];
         [self adjustTableViewForTagView:tagView];
         
         NSLog(@"[WeChatTagGroup] 已添加标签视图，共 %lu 人", (unsigned long)contacts.count);
@@ -397,7 +394,6 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
     @try {
         UIView *existingView = [self.view viewWithTag:20240421];
         if (!existingView) {
-            // 没有就重新添加
             [self injectTagGroupView];
         }
     } @catch (NSException *e) {
@@ -408,18 +404,14 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
 %new
 - (void)adjustTableViewForTagView:(UIView *)tagView {
     @try {
-        // 查找 UITableView
         for (UIView *subview in self.view.subviews) {
             if ([subview isKindOfClass:[UITableView class]]) {
                 CGRect frame = subview.frame;
                 CGFloat tagHeight = tagView.frame.size.height;
                 
-                // 判断是否有导航栏偏移
                 if (frame.origin.y < 100) {
-                    // 正常情况，tableView从顶部开始
                     frame.origin.y = tagHeight;
                 } else {
-                    // 有其他偏移，叠加
                     frame.origin.y += tagHeight;
                 }
                 frame.size.height -= tagHeight;
@@ -434,32 +426,11 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
     }
 }
 
-%end
-
-#pragma mark - 全局点击处理
-
-// 让 view controller 响应标签点击
-%hook NewMainFrameViewController
-
-%new
-- (void)tagContactTapped:(UITapGestureRecognizer *)tap {
-    @try {
-        NSString *wxid = objc_getAssociatedObject(tap, "wxid");
-        if (wxid && [wxid length] > 0) {
-            NSLog(@"[WeChatTagGroup] 点击了联系人: %@", wxid);
-            openChatWithContact(wxid);
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[WeChatTagGroup] tagContactTapped error: %@", e);
-    }
-}
-
 %new
 - (void)hideTagGroupView {
     @try {
         UIView *tagView = [self.view viewWithTag:20240421];
         if (tagView) {
-            // 恢复 tableView
             for (UIView *subview in self.view.subviews) {
                 if ([subview isKindOfClass:[UITableView class]]) {
                     CGRect frame = subview.frame;
@@ -479,5 +450,5 @@ static UIView *createTagGroupView(NSArray<TagContact *> *contacts, UIView *paren
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] v16功能版已加载 - 标签: %@", kTargetTagName);
+    NSLog(@"[WeChatTagGroup] v17功能版已加载 - 标签: %@", kTargetTagName);
 }
