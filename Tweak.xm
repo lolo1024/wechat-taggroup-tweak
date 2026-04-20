@@ -1,6 +1,6 @@
 /**
- * WeChat Tag Group - 弹窗调试版 v3
- * 尝试更多可能的类名
+ * WeChat Tag Group - 弹窗调试版 v4
+ * 测试找到的类是否能正常使用
  */
 
 #import <UIKit/UIKit.h>
@@ -19,7 +19,7 @@ static void showDebugAlert(NSString *info) {
             rootVC = rootVC.presentedViewController;
         }
         
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WeChatTagGroup 调试v3"
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WeChatTagGroup 调试v4"
                                                                        message:info
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
@@ -37,35 +37,101 @@ static void showDebugAlert(NSString *info) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                 NSMutableString *info = [NSMutableString string];
                 
-                [info appendString:@"【会话相关】\n"];
-                for (NSString *name in @[
-                    @"MMConversationMgr", @"ConversationMgr",
-                    @"MMConversationService", @"ConversationService",
-                    @"MMMsgMgr", @"MessageManager",
-                    @"CMessageMgr", @"MessageMgr",
-                    @"SessionService", @"MMServiceCenter"
-                ]) {
-                    Class cls = NSClassFromString(name);
-                    [info appendFormat:@"%@: %@\n", name, cls ? @"存在" : @"不存在"];
+                // 测试 ContactTagMgr
+                Class tagMgrClass = NSClassFromString(@"ContactTagMgr");
+                if (tagMgrClass) {
+                    [info appendString:@"【ContactTagMgr】\n"];
+                    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+                    if ([tagMgrClass respondsToSelector:sharedSel]) {
+                        [info appendString:@"sharedInstance: 可用\n"];
+                        #pragma clang diagnostic push
+                        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                        id tagMgr = [tagMgrClass performSelector:sharedSel];
+                        #pragma clang diagnostic pop
+                        if (tagMgr) {
+                            [info appendFormat:@"实例: %@\n", tagMgr];
+                            
+                            // 尝试获取标签列表
+                            SEL getTagsSel = NSSelectorFromString(@"getContactLabels");
+                            if ([tagMgr respondsToSelector:getTagsSel]) {
+                                [info appendString:@"getContactLabels: 存在\n"];
+                            }
+                            
+                            SEL labelListSel = NSSelectorFromString(@"getLabelList");
+                            if ([tagMgr respondsToSelector:labelListSel]) {
+                                [info appendString:@"getLabelList: 存在\n"];
+                            }
+                            
+                            SEL allLabelsSel = NSSelectorFromString(@"getAllLabels");
+                            if ([tagMgr respondsToSelector:allLabelsSel]) {
+                                [info appendString:@"getAllLabels: 存在\n"];
+                            }
+                        }
+                    } else {
+                        [info appendString:@"sharedInstance: 不可用\n"];
+                    }
+                    
+                    unsigned int methodCount = 0;
+                    Method *methods = class_copyMethodList(tagMgrClass, &methodCount);
+                    if (methods) {
+                        [info appendFormat:@"共 %d 个方法:\n", methodCount];
+                        for (unsigned int i = 0; i < methodCount && i < 20; i++) {
+                            NSString *methodName = NSStringFromSelector(method_getName(methods[i]));
+                            if ([methodName.lowercaseString containsString:@"label"] ||
+                                [methodName.lowercaseString containsString:@"tag"]) {
+                                [info appendFormat:@"  - %@\n", methodName];
+                            }
+                        }
+                        free(methods);
+                    }
                 }
                 
-                [info appendString:@"\n【联系人/标签相关】\n"];
-                for (NSString *name in @[
-                    @"ContactStorage", @"ContactMgr",
-                    @"MMContactMgr", @"CContactMgr",
-                    @"AddressBookMgr", @"MMAddressBookMgr",
-                    @"TagMgr", @"ContactTagMgr", @"LabelMgr"
-                ]) {
-                    Class cls = NSClassFromString(name);
-                    [info appendFormat:@"%@: %@\n", name, cls ? @"存在" : @"不存在"];
+                // 测试 MMServiceCenter
+                Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
+                if (serviceCenterClass) {
+                    [info appendString:@"\n【MMServiceCenter】\n"];
+                    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+                    if ([serviceCenterClass respondsToSelector:sharedSel]) {
+                        [info appendString:@"sharedInstance: 可用\n"];
+                        #pragma clang diagnostic push
+                        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                        id serviceCenter = [serviceCenterClass performSelector:sharedSel];
+                        #pragma clang diagnostic pop
+                        if (serviceCenter) {
+                            [info appendFormat:@"实例: %@\n", serviceCenter];
+                            
+                            // 尝试获取ContactTagMgr
+                            if ([serviceCenter respondsToSelector:@selector(getService:)]) {
+                                [info appendString:@"getService: 存在\n"];
+                                #pragma clang diagnostic push
+                                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                id tagService = [serviceCenter performSelector:@selector(getService:) withObject:tagMgrClass];
+                                #pragma clang diagnostic pop
+                                if (tagService) {
+                                    [info appendFormat:@"ContactTagMgr via ServiceCenter: %@\n", tagService];
+                                }
+                            }
+                        }
+                    }
                 }
                 
-                [info appendString:@"\n【共享实例方法】\n"];
-                for (NSString *sel in @[
-                    @"sharedInstance", @"defaultManager", @"defaultMgr",
-                    @"sharedManager", @"Instance", @"sharedConversationMgr"
-                ]) {
-                    [info appendFormat:@"尝试: %@\n", sel];
+                // 测试 CContactMgr
+                Class contactClass = NSClassFromString(@"CContactMgr");
+                if (contactClass) {
+                    [info appendString:@"\n【CContactMgr】\n"];
+                    unsigned int methodCount = 0;
+                    Method *methods = class_copyMethodList(contactClass, &methodCount);
+                    if (methods) {
+                        [info appendFormat:@"共 %d 个方法:\n", methodCount];
+                        for (unsigned int i = 0; i < methodCount && i < 20; i++) {
+                            NSString *methodName = NSStringFromSelector(method_getName(methods[i]));
+                            if ([methodName.lowercaseString containsString:@"label"] ||
+                                [methodName.lowercaseString containsString:@"tag"]) {
+                                [info appendFormat:@"  - %@\n", methodName];
+                            }
+                        }
+                        free(methods);
+                    }
                 }
                 
                 showDebugAlert(info);
@@ -76,5 +142,5 @@ static void showDebugAlert(NSString *info) {
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] 调试版v3已加载");
+    NSLog(@"[WeChatTagGroup] 调试版v4已加载");
 }
