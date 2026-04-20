@@ -1,1 +1,58 @@
+name: Build Theos Tweak
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Theos
+      run: |
+        brew install ldid
+        git clone --recursive https://github.com/theos/theos.git $HOME/theos
+        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+        
+    - name: Build Tweak
+      run: |
+        cd $GITHUB_WORKSPACE
+        make package
+        
+    - name: Upload DEB artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WeChatTagGroup-deb
+        path: packages/*.deb
+        retention-days: 30
+        
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: WeChatTagGroup v1.0.${{ github.run_number }}
+        files: packages/*.deb
+        body: |
+          ## 微信标签分组插件
+          
+          ### 功能
+          - 将微信标签好友以分组形式显示在聊天列表顶部
+          - 支持展开/折叠
+          - 显示未读消息角标
+          
+          ### 使用方法
+          1. 下载 .deb 文件
+          2. 使用巨魔安装器安装
+          3. 重启微信
+          4. 在微信中创建标签 "置顶好友"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
