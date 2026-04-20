@@ -3,19 +3,15 @@
  * 功能：将微信标签好友以分组形式显示在聊天列表顶部
  * 
  * 适配微信版本：8.0.x (iOS 15+)
- * 
- * 免责声明：本插件仅供学习研究使用，请勿用于商业用途
  */
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
-// ========== 配置区 ==========
 static NSString *const kTargetTagName = @"置顶好友";
 static BOOL kEnableFeature = YES;
 static BOOL kShowUnreadBadge = YES;
-// ==============================
 
 @interface MMSessionInfo : NSObject
 @property (nonatomic, copy) NSString *m_nsUsrName;
@@ -54,7 +50,6 @@ static BOOL kShowUnreadBadge = YES;
 - (void)reloadSessionData;
 @end
 
-// ========== 分组头部视图 ==========
 @interface WCTagGroupHeaderView : UIView
 @property (nonatomic, copy) NSString *tagName;
 @property (nonatomic, assign) NSInteger onlineCount;
@@ -75,27 +70,23 @@ static BOOL kShowUnreadBadge = YES;
 }
 
 - (void)setupUI {
- // 箭头
  UIImageView *arrow = [[UIImageView alloc] initWithFrame:CGRectMake(15, 20, 20, 20)];
  arrow.image = [UIImage systemImageNamed:@"chevron.right"];
  arrow.tintColor = [UIColor grayColor];
  arrow.tag = 100;
  [self addSubview:arrow];
  
- // 标题
  UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(45, 8, 200, 22)];
  titleLabel.font = [UIFont boldSystemFontOfSize:16];
  titleLabel.tag = 101;
  [self addSubview:titleLabel];
  
- // 统计
  UILabel *countLabel = [[UILabel alloc] initWithFrame:CGRectMake(45, 32, 150, 18)];
  countLabel.font = [UIFont systemFontOfSize:12];
  countLabel.textColor = [UIColor grayColor];
  countLabel.tag = 102;
  [self addSubview:countLabel];
  
- // 角标
  UILabel *badgeLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.bounds.size.width - 35, 20, 20, 20)];
  badgeLabel.font = [UIFont boldSystemFontOfSize:12];
  badgeLabel.textColor = [UIColor whiteColor];
@@ -147,7 +138,6 @@ static BOOL kShowUnreadBadge = YES;
 
 @end
 
-// ========== 分组Cell ==========
 @interface WCTagGroupSessionCell : UITableViewCell
 @property (nonatomic, strong) MMSessionInfo *sessionInfo;
 @end
@@ -163,7 +153,6 @@ static BOOL kShowUnreadBadge = YES;
 }
 
 - (void)setupUI {
- // 头像
  UIImageView *avatar = [[UIImageView alloc] initWithFrame:CGRectMake(15, 10, 50, 50)];
  avatar.layer.cornerRadius = 25;
  avatar.layer.masksToBounds = YES;
@@ -171,13 +160,11 @@ static BOOL kShowUnreadBadge = YES;
  avatar.tag = 200;
  [self.contentView addSubview:avatar];
  
- // 昵称
  UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(77, 10, 180, 22)];
  nameLabel.font = [UIFont boldSystemFontOfSize:16];
  nameLabel.tag = 201;
  [self.contentView addSubview:nameLabel];
  
- // 时间
  UILabel *timeLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.contentView.bounds.size.width - 80, 12, 65, 18)];
  timeLabel.font = [UIFont systemFontOfSize:12];
  timeLabel.textColor = [UIColor grayColor];
@@ -185,14 +172,12 @@ static BOOL kShowUnreadBadge = YES;
  timeLabel.tag = 202;
  [self.contentView addSubview:timeLabel];
  
- // 内容
  UILabel *contentLabel = [[UILabel alloc] initWithFrame:CGRectMake(77, 35, 200, 20)];
  contentLabel.font = [UIFont systemFontOfSize:14];
  contentLabel.textColor = [UIColor grayColor];
  contentLabel.tag = 203;
  [self.contentView addSubview:contentLabel];
  
- // 角标
  UILabel *badgeLabel = [[UILabel alloc] initWithFrame:CGRectMake(self.contentView.bounds.size.width - 35, 38, 20, 20)];
  badgeLabel.font = [UIFont boldSystemFontOfSize:12];
  badgeLabel.textColor = [UIColor whiteColor];
@@ -246,7 +231,6 @@ static BOOL kShowUnreadBadge = YES;
 
 @end
 
-// ========== Tweak 实现 ==========
 static NSMutableArray *_tagGroupSessions = nil;
 static BOOL _isTagGroupExpanded = NO;
 
@@ -325,5 +309,5 @@ static BOOL _isTagGroupExpanded = NO;
  %orig(tableView, adjustedPath);
 }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderI
+- (CGFloat)tableView:(UITableView *)tabl
 ...(truncated)...
