@@ -1,5 +1,7 @@
-Package = com.yourname.wechattaggroup
-TWEAK_NAME = WeChatTagGroup
-DISPLAY_NAME = 微信标签分组
-AUTHOR = YourName
-VERSION = 1.0.0
+Package: com.yourname.wechattaggroup
+Tweak_Name: WeChatTagGroup
+Display_Name: 微信标签分组
+Author: YourName
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: A tweak to show WeChat tag group friends at the top of chat list
