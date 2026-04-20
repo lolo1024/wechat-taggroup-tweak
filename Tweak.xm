@@ -1,30 +1,18 @@
 /**
- * WeChat Tag Group - 弹窗调试版
- * 安装后打开微信会弹窗显示调试信息
+ * WeChat Tag Group - 弹窗调试版 v2
  */
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
-static void showAlert(NSString *title, NSString *message) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-                                                                       message:message
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        UIAlertAction *ok = [UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil];
-        [alert addAction:ok];
-        [rootVC presentViewController:alert animated:YES completion:nil];
-    });
-}
+static BOOL _alertShown = NO;
 
-%hook UIApplication
-
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    BOOL result = %orig;
+static void showDebugAlert() {
+    if (_alertShown) return;
+    _alertShown = YES;
     
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
         NSMutableString *info = [NSMutableString string];
         
         [info appendString:@"【会话管理器】\n"];
@@ -39,20 +27,40 @@ static void showAlert(NSString *title, NSString *message) {
             [info appendFormat:@"%@: %@\n", name, cls ? @"存在" : @"不存在"];
         }
         
-        [info appendString:@"\n【主控制器】\n"];
+        [info appendString:@"\n【主页面】\n"];
         for (NSString *name in @[@"NewMainFrameViewController", @"WCMainViewController", @"MainViewController"]) {
             Class cls = NSClassFromString(name);
             [info appendFormat:@"%@: %@\n", name, cls ? @"存在" : @"不存在"];
         }
         
-        showAlert(@"WeChatTagGroup 调试信息", info);
+        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        while (rootVC.presentedViewController) {
+            rootVC = rootVC.presentedViewController;
+        }
+        
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WeChatTagGroup 调试"
+                                                                       message:info
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+        [rootVC presentViewController:alert animated:YES completion:nil];
     });
-    
-    return result;
 }
 
+%hook UIViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    
+    if (!_alertShown) {
+        NSString *className = NSStringFromClass([self class]);
+        if ([className containsString:@"Main"] || [className containsString:@"Chat"]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                showDebugAlert();
+            });
+        }
+    }
+}
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] 弹窗调试版已加载");
+    NSLog(@"[WeChatTagGroup] 调试版v2已加载");
 }
