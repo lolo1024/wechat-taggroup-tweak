@@ -27,33 +27,6 @@ static void showDebugAlert(NSString *info) {
     });
 }
 
-// 打印对象的所有 Ivar
-static void printIvars(id obj, NSMutableString *info, NSString *prefix) {
-    Class c = [obj class];
-    while (c && c != [NSObject class]) {
-        unsigned int ivarCount = 0;
-        Ivar *ivars = class_copyIvarList(c, &ivarCount);
-        if (ivars) {
-            for (unsigned int i = 0; i < ivarCount; i++) {
-                const char *name = ivar_getName(ivars[i]);
-                ptrdiff_t offset = ivar_getOffset(ivars[i]);
-                if (offset > 0 && name) {
-                    void *ptr = (__bridge void *)obj + offset;
-                    id value = nil;
-                    memcpy(&value, ptr, sizeof(id));
-                    NSString *varName = [NSString stringWithUTF8String:name];
-                    // 只显示字符串类型的
-                    if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNumber class]]) {
-                        [info appendFormat:@"%@%@ = %@\n", prefix, varName, value];
-                    }
-                }
-            }
-            free(ivars);
-        }
-        c = class_getSuperclass(c);
-    }
-}
-
 %hook UIViewController
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -115,7 +88,6 @@ static void printIvars(id obj, NSMutableString *info, NSString *prefix) {
                     if (methods) {
                         for (unsigned int i = 0; i < mcount; i++) {
                             NSString *mn = NSStringFromSelector(method_getName(methods[i]));
-                            // 查找获取联系人的方法
                             if ([mn.lowercaseString containsString:@"getcontact"] ||
                                 [mn.lowercaseString containsString:@"fetchcontact"] ||
                                 [mn.lowercaseString containsString:@"contactlist"] ||
@@ -150,7 +122,22 @@ static void printIvars(id obj, NSMutableString *info, NSString *prefix) {
                     
                     [info appendString:@"\n【当前用户信息】\n"];
                     if (selfContact) {
-                        printIvars(selfContact, info, @"  ");
+                        [info appendFormat:@"类型: %@\n", NSStringFromClass([selfContact class])];
+                        
+                        // 尝试常见属性名
+                        NSArray *propNames = @[@"m_nsUsrName", @"usrName", @"nickName", @"nickname", @"getUserName"];
+                        for (NSString *prop in propNames) {
+                            SEL sel = NSSelectorFromString(prop);
+                            if ([selfContact respondsToSelector:sel]) {
+                                #pragma clang diagnostic push
+                                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                id val = [selfContact performSelector:sel];
+                                #pragma clang diagnostic pop
+                                if (val) {
+                                    [info appendFormat:@"%@: %@\n", prop, val];
+                                }
+                            }
+                        }
                     }
                 }
                 
