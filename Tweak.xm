@@ -1,6 +1,6 @@
 /**
- * WeChat Tag Group - 弹窗调试版 v4
- * 测试找到的类是否能正常使用
+ * WeChat Tag Group - 弹窗调试版 v5
+ * 测试调用 CContactMgr 的标签方法
  */
 
 #import <UIKit/UIKit.h>
@@ -19,7 +19,7 @@ static void showDebugAlert(NSString *info) {
             rootVC = rootVC.presentedViewController;
         }
         
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WeChatTagGroup 调试v4"
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WeChatTagGroup 调试v5"
                                                                        message:info
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
@@ -37,97 +37,75 @@ static void showDebugAlert(NSString *info) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                 NSMutableString *info = [NSMutableString string];
                 
-                // 测试 ContactTagMgr
-                Class tagMgrClass = NSClassFromString(@"ContactTagMgr");
-                if (tagMgrClass) {
-                    [info appendString:@"【ContactTagMgr】\n"];
+                // 1. 通过 MMServiceCenter 获取 CContactMgr
+                Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
+                Class contactMgrClass = NSClassFromString(@"CContactMgr");
+                
+                if (serviceCenterClass && contactMgrClass) {
+                    [info appendString:@"【MMServiceCenter 获取 CContactMgr】\n"];
+                    
                     SEL sharedSel = NSSelectorFromString(@"sharedInstance");
-                    if ([tagMgrClass respondsToSelector:sharedSel]) {
-                        [info appendString:@"sharedInstance: 可用\n"];
+                    if ([serviceCenterClass respondsToSelector:sharedSel]) {
                         #pragma clang diagnostic push
                         #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                        id tagMgr = [tagMgrClass performSelector:sharedSel];
+                        id serviceCenter = [serviceCenterClass performSelector:sharedSel];
                         #pragma clang diagnostic pop
-                        if (tagMgr) {
-                            [info appendFormat:@"实例: %@\n", tagMgr];
+                        
+                        if (serviceCenter) {
+                            [info appendFormat:@"MMServiceCenter 实例: %@\n", serviceCenter];
                             
-                            // 尝试获取标签列表
-                            SEL getTagsSel = NSSelectorFromString(@"getContactLabels");
-                            if ([tagMgr respondsToSelector:getTagsSel]) {
-                                [info appendString:@"getContactLabels: 存在\n"];
-                            }
-                            
-                            SEL labelListSel = NSSelectorFromString(@"getLabelList");
-                            if ([tagMgr respondsToSelector:labelListSel]) {
-                                [info appendString:@"getLabelList: 存在\n"];
-                            }
-                            
-                            SEL allLabelsSel = NSSelectorFromString(@"getAllLabels");
-                            if ([tagMgr respondsToSelector:allLabelsSel]) {
-                                [info appendString:@"getAllLabels: 存在\n"];
+                            // 尝试 getService:
+                            if ([serviceCenter respondsToSelector:@selector(getService:)]) {
+                                [info appendString:@"getService: 可调用\n"];
+                                
+                                #pragma clang diagnostic push
+                                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                id contactMgr = [serviceCenter performSelector:@selector(getService:) withObject:contactMgrClass];
+                                #pragma clang diagnostic pop
+                                
+                                if (contactMgr) {
+                                    [info appendFormat:@"CContactMgr 实例: %@\n", contactMgr];
+                                    
+                                    // 尝试调用 getArrContactTagIDWithUserName:
+                                    SEL getTagsSel = NSSelectorFromString(@"getArrContactTagIDWithUserName:");
+                                    if ([contactMgr respondsToSelector:getTagsSel]) {
+                                        [info appendString:@"getArrContactTagIDWithUserName: 可调用\n"];
+                                        
+                                        // 尝试获取自己的标签
+                                        #pragma clang diagnostic push
+                                        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                        NSArray *myTags = [contactMgr performSelector:getTagsSel withObject:@"weixin"];
+                                        #pragma clang diagnostic pop
+                                        if (myTags) {
+                                            [info appendFormat:@"我的标签: %@\n", myTags];
+                                        } else {
+                                            [info appendString:@"我的标签: (空)\n"];
+                                        }
+                                    } else {
+                                        [info appendString:@"getArrContactTagIDWithUserName: 不可调用\n"];
+                                    }
+                                } else {
+                                    [info appendString:@"CContactMgr 实例: 获取失败\n"];
+                                }
+                            } else {
+                                [info appendString:@"getService: 不可调用\n"];
                             }
                         }
                     } else {
                         [info appendString:@"sharedInstance: 不可用\n"];
                     }
-                    
-                    unsigned int methodCount = 0;
-                    Method *methods = class_copyMethodList(tagMgrClass, &methodCount);
-                    if (methods) {
-                        [info appendFormat:@"共 %d 个方法:\n", methodCount];
-                        for (unsigned int i = 0; i < methodCount && i < 20; i++) {
-                            NSString *methodName = NSStringFromSelector(method_getName(methods[i]));
-                            if ([methodName.lowercaseString containsString:@"label"] ||
-                                [methodName.lowercaseString containsString:@"tag"]) {
-                                [info appendFormat:@"  - %@\n", methodName];
-                            }
-                        }
-                        free(methods);
-                    }
                 }
                 
-                // 测试 MMServiceCenter
-                Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
-                if (serviceCenterClass) {
-                    [info appendString:@"\n【MMServiceCenter】\n"];
-                    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
-                    if ([serviceCenterClass respondsToSelector:sharedSel]) {
-                        [info appendString:@"sharedInstance: 可用\n"];
-                        #pragma clang diagnostic push
-                        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                        id serviceCenter = [serviceCenterClass performSelector:sharedSel];
-                        #pragma clang diagnostic pop
-                        if (serviceCenter) {
-                            [info appendFormat:@"实例: %@\n", serviceCenter];
-                            
-                            // 尝试获取ContactTagMgr
-                            if ([serviceCenter respondsToSelector:@selector(getService:)]) {
-                                [info appendString:@"getService: 存在\n"];
-                                #pragma clang diagnostic push
-                                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                                id tagService = [serviceCenter performSelector:@selector(getService:) withObject:tagMgrClass];
-                                #pragma clang diagnostic pop
-                                if (tagService) {
-                                    [info appendFormat:@"ContactTagMgr via ServiceCenter: %@\n", tagService];
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 测试 CContactMgr
-                Class contactClass = NSClassFromString(@"CContactMgr");
-                if (contactClass) {
-                    [info appendString:@"\n【CContactMgr】\n"];
+                // 2. 列出 CContactMgr 中所有标签相关方法
+                if (contactMgrClass) {
+                    [info appendString:@"\n【CContactMgr 标签方法列表】\n"];
                     unsigned int methodCount = 0;
-                    Method *methods = class_copyMethodList(contactClass, &methodCount);
+                    Method *methods = class_copyMethodList(contactMgrClass, &methodCount);
                     if (methods) {
-                        [info appendFormat:@"共 %d 个方法:\n", methodCount];
-                        for (unsigned int i = 0; i < methodCount && i < 20; i++) {
+                        for (unsigned int i = 0; i < methodCount; i++) {
                             NSString *methodName = NSStringFromSelector(method_getName(methods[i]));
-                            if ([methodName.lowercaseString containsString:@"label"] ||
-                                [methodName.lowercaseString containsString:@"tag"]) {
-                                [info appendFormat:@"  - %@\n", methodName];
+                            if ([methodName.lowercaseString containsString:@"tag"]) {
+                                [info appendFormat:@"  %@\n", methodName];
                             }
                         }
                         free(methods);
@@ -142,5 +120,5 @@ static void showDebugAlert(NSString *info) {
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] 调试版v4已加载");
+    NSLog(@"[WeChatTagGroup] 调试版v5已加载");
 }
