@@ -1,6 +1,6 @@
 /**
  * WeChat Tag Group - v11
- * 获取"客户"标签的联系人
+ * 直接获取"客户"标签的联系人
  */
 
 #import <UIKit/UIKit.h>
@@ -47,7 +47,7 @@ static void showDebugAlert(NSString *info) {
                     #pragma clang diagnostic pop
                 }
                 
-                // 2. 获取 ContactTagMgr (尝试通过 serviceCenter)
+                // 2. 获取 ContactTagMgr
                 Class tagMgrClass = NSClassFromString(@"ContactTagMgr");
                 id tagMgr = nil;
                 if (serviceCenter && tagMgrClass && [serviceCenter respondsToSelector:@selector(getService:)]) {
@@ -56,8 +56,6 @@ static void showDebugAlert(NSString *info) {
                     tagMgr = [serviceCenter performSelector:@selector(getService:) withObject:tagMgrClass];
                     #pragma clang diagnostic pop
                 }
-                
-                // 如果 serviceCenter 不行，尝试 alloc init
                 if (!tagMgr && tagMgrClass) {
                     #pragma clang diagnostic push
                     #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
@@ -68,74 +66,92 @@ static void showDebugAlert(NSString *info) {
                 [info appendFormat:@"ContactTagMgr: %@\n", tagMgr ? @"获取成功" : @"失败"];
                 
                 if (tagMgr) {
-                    [info appendFormat:@"实例: %@\n\n", tagMgr];
-                    
-                    // 3. 尝试 getDicOfUserNameAndTagNames
-                    SEL dicSel = NSSelectorFromString(@"getDicOfUserNameAndTagNames:");
-                    if ([tagMgr respondsToSelector:dicSel]) {
-                        [info appendString:@"[getDicOfUserNameAndTagNames:]\n"];
-                        #pragma clang diagnostic push
-                        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                        NSDictionary *dic = [tagMgr performSelector:dicSel];
-                        #pragma clang diagnostic pop
-                        if (dic && dic.count > 0) {
-                            [info appendFormat:@"返回了 %lu 个联系人\n", (unsigned long)dic.count];
-                            // 遍历找有"客户"标签的
-                            NSInteger found = 0;
-                            for (NSString *username in dic) {
-                                id tagInfo = dic[username];
-                                NSString *tagStr = nil;
-                                if ([tagInfo isKindOfClass:[NSString class]]) {
-                                    tagStr = tagInfo;
-                                } else if ([tagInfo isKindOfClass:[NSArray class]]) {
-                                    tagStr = [(NSArray *)tagInfo componentsJoinedByString:@","];
-                                } else {
-                                    tagStr = [NSString stringWithFormat:@"%@", tagInfo];
-                                }
-                                if ([tagStr containsString:@"客户"]) {
-                                    [info appendFormat:@"★ %@: %@\n", username, tagStr];
-                                    found++;
-                                    if (found >= 10) {
-                                        [info appendFormat:@"...还有更多\n"];
-                                        break;
-                                    }
-                                }
-                            }
-                            if (found == 0) {
-                                [info appendString:@"没有找到\"客户\"标签的联系人\n"];
-                                // 打印前几个看看格式
-                                [info appendString:@"\n前几个数据样例:\n"];
-                                NSArray *keys = [dic allKeys];
-                                for (NSInteger i = 0; i < MIN(3, keys.count); i++) {
-                                    NSString *key = keys[i];
-                                    [info appendFormat:@"  %@: %@\n", key, dic[key]];
-                                }
-                            }
-                        } else {
-                            [info appendString:@"返回为空\n"];
-                        }
-                    } else {
-                        [info appendString:@"getDicOfUserNameAndTagNames: 不可用\n"];
-                    }
-                    
-                    // 4. 尝试 shouldGetAllLabelsFromServer
+                    // 3. 先尝试 shouldGetAllLabelsFromServer 刷新数据
                     SEL refreshSel = NSSelectorFromString(@"shouldGetAllLabelsFromServer");
                     if ([tagMgr respondsToSelector:refreshSel]) {
-                        [info appendString:@"\n[shouldGetAllLabelsFromServer]\n"];
+                        [info appendString:@"\n[刷新标签数据]\n"];
                         #pragma clang diagnostic push
                         #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
                         [tagMgr performSelector:refreshSel];
                         #pragma clang diagnostic pop
-                        [info appendString:@"已调用\n"];
-                        
-                        // 再试一次 getDicOfUserNameAndTagNames
-                        if ([tagMgr respondsToSelector:dicSel]) {
-                            #pragma clang diagnostic push
-                            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                            NSDictionary *dic = [tagMgr performSelector:dicSel];
-                            #pragma clang diagnostic pop
-                            [info appendFormat:@"刷新后: %lu 个联系人\n", (unsigned long)dic.count];
+                        [info appendString:@"已调用刷新\n"];
+                    }
+                    
+                    // 4. 获取所有标签列表 GetContactLabelItemsFromFile
+                    SEL labelItemsSel = NSSelectorFromString(@"GetContactLabelItemsFromFile");
+                    if ([tagMgr respondsToSelector:labelItemsSel]) {
+                        [info appendString:@"\n[所有标签列表]\n"];
+                        #pragma clang diagnostic push
+                        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                        id labelItems = [tagMgr performSelector:labelItemsSel];
+                        #pragma clang diagnostic pop
+                        if (labelItems && [labelItems isKindOfClass:[NSArray class]]) {
+                            [info appendFormat:@"共有 %lu 个标签\n", (unsigned long)[labelItems count]];
+                            
+                            // 找"客户"标签
+                            NSString *customerTagID = nil;
+                            for (id item in labelItems) {
+                                // 尝试获取标签名和ID
+                                NSString *name = nil;
+                                NSString *tagId = nil;
+                                
+                                // 尝试属性
+                                SEL nameSel = NSSelectorFromString(@"getLabelName");
+                                if ([item respondsToSelector:nameSel]) {
+                                    #pragma clang diagnostic push
+                                    #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                    name = [item performSelector:nameSel];
+                                    #pragma clang diagnostic pop
+                                }
+                                
+                                SEL idSel = NSSelectorFromString(@"getLabelId");
+                                if ([item respondsToSelector:idSel]) {
+                                    #pragma clang diagnostic push
+                                    #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                                    tagId = [item performSelector:idSel];
+                                    #pragma clang diagnostic pop
+                                }
+                                
+                                if (name) {
+                                    [info appendFormat:@"  标签: %@ (ID: %@)\n", name, tagId ? tagId : @"?"];
+                                    
+                                    if ([name isEqualToString:@"客户"]) {
+                                        customerTagID = tagId;
+                                        [info appendString:@"  ★ 找到了\"客户\"标签!\n"];
+                                    }
+                                }
+                            }
+                            
+                            // 5. 如果找到"客户"标签ID，获取该标签的联系人
+                            if (customerTagID) {
+                                [info appendFormat:@"\n[获取\"客户\"标签联系人, TagID: %@]\n", customerTagID];
+                                
+                                // 这里可能需要调用某个方法通过TagID获取联系人
+                                // 或者用 getContactTagIDListToNameList: 传入标签名
+                                SEL getByTagSel = NSSelectorFromString(@"getContactTagIDListToNameList:");
+                                if ([tagMgr respondsToSelector:getByTagSel]) {
+                                    [info appendString:@"尝试 getContactTagIDListToNameList:\n"];
+                                }
+                            }
+                        } else if (labelItems) {
+                            [info appendFormat:@"返回类型: %@\n", NSStringFromClass([labelItems class])];
+                        } else {
+                            [info appendString:@"返回为空\n"];
                         }
+                    } else {
+                        [info appendString:@"GetContactLabelItemsFromFile 不可用\n"];
+                    }
+                    
+                    // 6. 列出 ContactTagMgr 所有方法
+                    [info appendString:@"\n[ContactTagMgr 完整方法列表]\n"];
+                    unsigned int mcount = 0;
+                    Method *methods = class_copyMethodList(tagMgrClass, &mcount);
+                    if (methods) {
+                        for (unsigned int i = 0; i < mcount; i++) {
+                            NSString *mn = NSStringFromSelector(method_getName(methods[i]));
+                            [info appendFormat:@"  %@\n", mn];
+                        }
+                        free(methods);
                     }
                 }
                 
