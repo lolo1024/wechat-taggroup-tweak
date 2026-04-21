@@ -1,6 +1,6 @@
 /**
  * WeChat Tag Group - v22 功能版
- * 在搜索栏下方添加标签切换栏
+ * 把标签栏加到 TableView 的 headerView
  */
 
 #import <UIKit/UIKit.h>
@@ -8,10 +8,6 @@
 #import <objc/runtime.h>
 
 static NSString *kTargetTagName = @"客户";
-
-#pragma mark - 全局变量
-
-static NSArray *g_tabNames = nil;
 
 #pragma mark - 安全调用
 
@@ -64,9 +60,9 @@ static id safeCallNoArg(id obj, SEL selector) {
 @implementation TagContact
 @end
 
-#pragma mark - 获取标签联系人wxid列表
+#pragma mark - 获取标签联系人
 
-static NSArray *getWxidsForTag(NSString *tagName) {
+static NSArray *getWxidsForTagWithFallback(NSString *tagName) {
     @try {
         Class scc = NSClassFromString(@"MMServiceCenter");
         Class tmc = NSClassFromString(@"ContactTagMgr");
@@ -76,29 +72,18 @@ static NSArray *getWxidsForTag(NSString *tagName) {
         id tm = safeCall(sc, @selector(getService:), tmc);
         if (!tm) { tm = [[tmc alloc] init]; }
         if (!tm) return @[];
+        
+        // 方法1: getContactsForTagName
         SEL sel = NSSelectorFromString(@"getContactsForTagName:");
         if ([tm respondsToSelector:sel]) {
             id result = safeCall(tm, sel, tagName);
-            if (result && [result isKindOfClass:[NSArray class]]) return result;
+            if (result && [result isKindOfClass:[NSArray class]] && [result count] > 0) return result;
         }
-        return @[];
-    } @catch (NSException *e) { return @[]; }
-}
-
-static NSArray *getWxidsForTagWithFallback(NSString *tagName) {
-    NSArray *result = getWxidsForTag(tagName);
-    if (result.count > 0) return result;
-    @try {
-        Class scc = NSClassFromString(@"MMServiceCenter");
-        Class tmc = NSClassFromString(@"ContactTagMgr");
-        if (!scc || !tmc) return @[];
-        id sc = safeCallNoArg(scc, @selector(defaultCenter));
-        id tm = sc ? safeCall(sc, @selector(getService:), tmc) : nil;
-        if (!tm) tm = [[tmc alloc] init];
-        if (!tm) return @[];
-        SEL sel = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
-        if ([tm respondsToSelector:sel]) {
-            id dic = safeCallNoArg(tm, sel);
+        
+        // 方法2: getDicOfUserNameAndTagNames
+        SEL sel2 = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
+        if ([tm respondsToSelector:sel2]) {
+            id dic = safeCallNoArg(tm, sel2);
             if (dic && [dic isKindOfClass:[NSDictionary class]]) {
                 NSMutableArray *wxids = [NSMutableArray array];
                 for (NSString *wxid in dic) {
@@ -143,27 +128,6 @@ static TagContact *getContactDetail(NSString *wxid) {
     } @catch (NSException *e) { return nil; }
 }
 
-static void openChat(NSString *wxid) {
-    if (!wxid || [wxid length] == 0) return;
-    @try {
-        Class scc = NSClassFromString(@"MMServiceCenter");
-        if (!scc) return;
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        id sc = [scc performSelector:@selector(defaultCenter)];
-        if (!sc) return;
-        Class mmc = NSClassFromString(@"CMessageMgr");
-        if (!mmc) return;
-        id mm = [sc performSelector:@selector(getService:) withObject:mmc];
-        if (!mm) return;
-        SEL sel = NSSelectorFromString(@"openChatViewControllerWithUsername:");
-        if ([mm respondsToSelector:sel]) {
-            [mm performSelector:sel withObject:wxid];
-        }
-        #pragma clang diagnostic pop
-    } @catch (NSException *e) {}
-}
-
 static BOOL hasSessionForWxid(NSString *wxid) {
     @try {
         Class scc = NSClassFromString(@"MMServiceCenter");
@@ -185,28 +149,48 @@ static BOOL hasSessionForWxid(NSString *wxid) {
     } @catch (NSException *e) { return NO; }
 }
 
-#pragma mark - 创建标签栏
+static void openChat(NSString *wxid) {
+    if (!wxid || [wxid length] == 0) return;
+    @try {
+        Class scc = NSClassFromString(@"MMServiceCenter");
+        if (!scc) return;
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        id sc = [scc performSelector:@selector(defaultCenter)];
+        if (!sc) return;
+        Class mmc = NSClassFromString(@"CMessageMgr");
+        if (!mmc) return;
+        id mm = [sc performSelector:@selector(getService:) withObject:mmc];
+        if (!mm) return;
+        SEL sel = NSSelectorFromString(@"openChatViewControllerWithUsername:");
+        if ([mm respondsToSelector:sel]) {
+            [mm performSelector:sel withObject:wxid];
+        }
+        #pragma clang diagnostic pop
+    } @catch (NSException *e) {}
+}
 
-static UIView *createTagTabBar(NSArray *tabNames, NSInteger selectedIndex, void (^onSelect)(NSInteger)) {
-    CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-    CGFloat tabH = 40;
-    CGFloat padding = 12;
-    CGFloat btnH = 30;
+#pragma mark - 创建标签栏视图
+
+static UIView *createTagTabBarView(NSArray *tabNames, NSInteger selectedIndex, void (^onSelect)(NSInteger), CGFloat width) {
+    CGFloat tabH = 50;
+    CGFloat padding = 15;
+    CGFloat btnH = 32;
     
     UIView *container = [[UIView alloc] init];
     container.backgroundColor = [UIColor whiteColor];
     
-    UIFont *font = [UIFont systemFontOfSize:14];
-    CGFloat x = padding;
+    UIFont *font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
     NSMutableArray *btns = [NSMutableArray array];
     
+    CGFloat x = padding;
     for (NSInteger i = 0; i < tabNames.count; i++) {
         NSString *name = tabNames[i];
         CGSize size = [name sizeWithAttributes:@{NSFontAttributeName: font}];
-        CGFloat w = size.width + 24;
+        CGFloat w = size.width + 30;
         BOOL isSelected = (i == selectedIndex);
         
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
         [btn setTitle:name forState:UIControlStateNormal];
         btn.titleLabel.font = font;
         
@@ -214,79 +198,85 @@ static UIView *createTagTabBar(NSArray *tabNames, NSInteger selectedIndex, void 
             btn.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
             [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         } else {
-            btn.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.95 alpha:1.0];
+            btn.backgroundColor = [UIColor colorWithRed:0.94 green:0.94 blue:0.94 alpha:1.0];
             [btn setTitleColor:[UIColor darkGrayColor] forState:UIControlStateNormal];
         }
         
         btn.layer.cornerRadius = btnH / 2;
         btn.frame = CGRectMake(x, (tabH - btnH) / 2, w, btnH);
+        btn.layer.masksToBounds = YES;
         
         objc_setAssociatedObject(btn, "tabIndex", @(i), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(btn, "tabCallback", onSelect, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        [btn addTarget:nil action:@selector(tabButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [btn addTarget:btn action:@selector(tabBtnTap:) forControlEvents:UIControlEventTouchUpInside];
         
         [container addSubview:btn];
         [btns addObject:btn];
-        x += w + 8;
+        x += w + 10;
     }
     
     objc_setAssociatedObject(container, "tabButtons", btns, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    container.frame = CGRectMake(0, 0, screenW, tabH + 10);
+    objc_setAssociatedObject(container, "currentIndex", @(selectedIndex), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    container.frame = CGRectMake(0, 0, width, tabH);
     
     return container;
 }
 
-#pragma mark - Tab按钮点击
-
-@interface UIButton (TagTabClick)
+@interface UIButton (TabBtn)
+- (void)tabBtnTap:(UIButton *)sender;
 @end
 
-@implementation UIButton (TagTabClick)
-
-+ (void)load {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        SEL original = @selector(tabButtonTapped:);
-        SEL swizzled = @selector(swizzled_tabButtonTapped:);
-        Method m1 = class_getInstanceMethod([UIButton class], original);
-        Method m2 = class_getInstanceMethod([UIButton class], swizzled);
-        if (m1 && m2) {
-            method_exchangeImplementations(m1, m2);
-        }
-    });
-}
-
-- (void)swizzled_tabButtonTapped:(UIButton *)sender {
+@implementation UIButton (TabBtn)
+- (void)tabBtnTap:(UIButton *)sender {
     NSNumber *idx = objc_getAssociatedObject(sender, "tabIndex");
-    if (idx) {
-        void (^callback)(NSInteger) = objc_getAssociatedObject(sender, "tabCallback");
-        if (callback) {
-            callback([idx integerValue]);
+    void (^callback)(NSInteger) = objc_getAssociatedObject(sender, "tabCallback");
+    if (idx && callback) {
+        NSInteger newIndex = [idx integerValue];
+        callback(newIndex);
+        
+        // 更新按钮样式
+        UIView *parent = sender.superview;
+        if (parent) {
+            NSArray *btns = objc_getAssociatedObject(parent, "tabButtons");
+            for (NSInteger i = 0; i < btns.count; i++) {
+                UIButton *b = btns[i];
+                if (i == newIndex) {
+                    b.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
+                    [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                } else {
+                    b.backgroundColor = [UIColor colorWithRed:0.94 green:0.94 blue:0.94 alpha:1.0];
+                    [b setTitleColor:[UIColor darkGrayColor] forState:UIControlStateNormal];
+                }
+            }
+            objc_setAssociatedObject(parent, "currentIndex", @(newIndex), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     }
-    [self swizzled_tabButtonTapped:sender];
 }
-
 @end
 
-#pragma mark - Hook NewMainFrameViewController
+#pragma mark - Hook
 
 %hook NewMainFrameViewController
 
 - (void)viewDidLoad {
     %orig;
     
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        UIViewController *vc = (UIViewController *)self;
-        UIView *parentView = vc.view;
-        if (!parentView) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        UITableView *tableView = nil;
+        for (UIView *sub in ((UIViewController *)self).view.subviews) {
+            if ([sub isKindOfClass:[UITableView class]]) {
+                tableView = (UITableView *)sub;
+                break;
+            }
+        }
+        if (!tableView) return;
         
-        UIView *existingBar = [parentView viewWithTag:202422];
-        if (existingBar) return;
+        // 检查是否已有标签栏
+        UIView *existing = objc_getAssociatedObject(tableView, "tagTabBar");
+        if (existing) return;
         
         // 获取所有标签
         NSMutableArray *tabNames = [NSMutableArray arrayWithObjects:@"全部", nil];
-        
         Class scc = NSClassFromString(@"MMServiceCenter");
         Class tmc = NSClassFromString(@"ContactTagMgr");
         if (scc && tmc) {
@@ -301,67 +291,27 @@ static UIView *createTagTabBar(NSArray *tabNames, NSInteger selectedIndex, void 
             }
         }
         
-        g_tabNames = tabNames;
+        NSInteger currentTab = 0;
         
-        // 选中的tab索引存储
-        __block NSInteger selectedIndex = 0;
+        UIView *tabBar = createTagTabBarView(tabNames, currentTab, ^(NSInteger index) {
+            // 切换标签 - 刷新列表
+            objc_setAssociatedObject(tableView, "currentTabIndex", @(index), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [tableView reloadData];
+        }, tableView.frame.size.width);
         
-        UIView *tabBar = createTagTabBar(tabNames, selectedIndex, ^(NSInteger index) {
-            selectedIndex = index;
-            
-            // 更新按钮样式
-            NSArray *btns = objc_getAssociatedObject(tabBar, "tabButtons");
-            for (NSInteger i = 0; i < btns.count; i++) {
-                UIButton *btn = btns[i];
-                if (i == index) {
-                    btn.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
-                    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-                } else {
-                    btn.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.95 alpha:1.0];
-                    [btn setTitleColor:[UIColor darkGrayColor] forState:UIControlStateNormal];
-                }
-            }
-            
-            // 刷新列表
-            for (UIView *sub in parentView.subviews) {
-                if ([sub isKindOfClass:[UITableView class]]) {
-                    [(UITableView *)sub reloadData];
-                    break;
-                }
-            }
-        });
+        objc_setAssociatedObject(tableView, "tagTabBar", tabBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(tableView, "currentTabIndex", @(0), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(tableView, "allTabNames", tabNames, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         
-        tabBar.tag = 202422;
-        [parentView addSubview:tabBar];
-        
-        // 调整 TableView 位置
-        for (UIView *sub in parentView.subviews) {
-            if ([sub isKindOfClass:[UITableView class]]) {
-                CGRect frame = sub.frame;
-                if (frame.origin.y < 100) {
-                    frame.origin.y = 55;
-                    frame.size.height -= 55;
-                    sub.frame = frame;
-                }
-                break;
-            }
-        }
+        // 设置为 tableHeaderView
+        tableView.tableHeaderView = tabBar;
         
         NSLog(@"[WeChatTagGroup] v22 标签栏已添加: %@", tabNames);
     });
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    // 全部标签
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     return %orig;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return %orig;
-}
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    %orig;
 }
 
 %end
