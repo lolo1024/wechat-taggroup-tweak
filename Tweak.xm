@@ -288,11 +288,12 @@ static NSArray *getWxidsForTag(NSString *tagName) {
             searchH = 55;
             // 创建一个新的搜索栏
             UISearchBar *origSB = (UISearchBar *)origHeader;
-            searchBarCopy = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, tv.frame.size.width, searchH)];
-            searchBarCopy.barTintColor = origSB.barTintColor;
-            searchBarCopy.placeholder = origSB.placeholder;
-            searchBarCopy.showsBookmarkButton = origSB.showsBookmarkButton;
-            searchBarCopy.showsSearchResultsButton = origSB.showsSearchResultsButton;
+            UISearchBar *newSB = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, tv.frame.size.width, searchH)];
+            newSB.placeholder = origSB.placeholder;
+            newSB.barTintColor = origSB.barTintColor;
+            newSB.showsBookmarkButton = origSB.showsBookmarkButton;
+            newSB.showsSearchResultsButton = origSB.showsSearchResultsButton;
+            searchBarCopy = newSB;
         }
         
         // 创建组合 header
