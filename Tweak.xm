@@ -1,6 +1,6 @@
 /**
- * WeChat Tag Group - v27 功能版
- * 修复：搜索栏功能 + 标签过滤逻辑
+ * WeChat Tag Group - v28 修复版
+ * 修复：联系人列表空白（改进API调用）+ 搜索栏重建
  */
 
 #import <UIKit/UIKit.h>
@@ -10,84 +10,137 @@
 static NSArray *g_allTags = nil;
 static NSInteger g_selectedTab = 0;
 
-static id g_originalDelegate = nil;
 static id g_originalDataSource = nil;
 static UITableView *g_tableView = nil;
 
-#pragma mark - 安全调用
+#pragma mark - 核心：获取联系人
 
-static id safeCall(id obj, SEL selector, id arg) {
-    @try {
-        if (!obj || ![obj respondsToSelector:selector]) return nil;
-        NSMethodSignature *sig = [obj methodSignatureForSelector:selector];
-        if (!sig) return nil;
-        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-        [inv setTarget:obj];
-        [inv setSelector:selector];
-        if (arg) [inv setArgument:&arg atIndex:2];
-        [inv invoke];
-        const char *retType = sig.methodReturnType;
-        if (retType[0] == '@') {
-            __unsafe_unretained id ret = nil;
-            [inv getReturnValue:&ret];
-            return ret;
-        }
-        return nil;
-    } @catch (NSException *e) { return nil; }
-}
-
-static id safeCallNoArg(id obj, SEL selector) {
-    @try {
-        if (!obj || ![obj respondsToSelector:selector]) return nil;
-        NSMethodSignature *sig = [obj methodSignatureForSelector:selector];
-        if (!sig) return nil;
-        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-        [inv setTarget:obj];
-        [inv setSelector:selector];
-        [inv invoke];
-        const char *retType = sig.methodReturnType;
-        if (retType[0] == '@') {
-            __unsafe_unretained id ret = nil;
-            [inv getReturnValue:&ret];
-            return ret;
-        }
-        return nil;
-    } @catch (NSException *e) { return nil; }
-}
-
-#pragma mark - 获取联系人
-
-static NSArray *getWxidsForTag(NSString *tagName) {
+static NSArray *getContactsForTag_v28(NSString *tagName) {
+    if (!tagName || [tagName length] == 0) return @[];
+    
     @try {
         Class scc = NSClassFromString(@"MMServiceCenter");
         Class tmc = NSClassFromString(@"ContactTagMgr");
         if (!scc || !tmc) return @[];
-        id sc = safeCallNoArg(scc, @selector(defaultCenter));
+        
+        id sc = nil;
+        @try {
+            SEL defaultSel = NSSelectorFromString(@"defaultCenter");
+            if ([scc respondsToSelector:defaultSel]) {
+                IMP imp = [scc methodForSelector:defaultSel];
+                id (*func)(id, SEL) = (void *)imp;
+                sc = func(scc, defaultSel);
+            }
+        } @catch (NSException *e) {}
         if (!sc) return @[];
-        id tm = safeCall(sc, @selector(getService:), tmc);
-        if (!tm) tm = [[tmc alloc] init];
+        
+        // 获取 ContactTagMgr
+        id tm = nil;
+        @try {
+            SEL svcSel = @selector(getService:);
+            if ([sc respondsToSelector:svcSel]) {
+                IMP imp = [sc methodForSelector:svcSel];
+                id (*func)(id, SEL, Class) = (void *)imp;
+                tm = func(sc, svcSel, tmc);
+            }
+        } @catch (NSException *e) {}
         if (!tm) return @[];
         
-        if ([tm respondsToSelector:NSSelectorFromString(@"getContactsForTagName:")]) {
-            id r = safeCall(tm, NSSelectorFromString(@"getContactsForTagName:"), tagName);
-            if (r && [r isKindOfClass:[NSArray class]]) return r;
+        // 方法1: getContactsForTagName:
+        @try {
+            SEL sel = NSSelectorFromString(@"getContactsForTagName:");
+            if ([tm respondsToSelector:sel]) {
+                IMP imp = [tm methodForSelector:sel];
+                id (*func)(id, SEL, NSString *) = (void *)imp;
+                id result = func(tm, sel, tagName);
+                if (result && [result isKindOfClass:[NSArray class]] && [result count] > 0) {
+                    NSLog(@"[WeChatTagGroup] v28 getContactsForTag('%@')=%lu个 via 直接调用", tagName, (unsigned long)[result count]);
+                    return result;
+                }
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[WeChatTagGroup] v28 方法1异常: %@", e);
         }
         
-        if ([tm respondsToSelector:NSSelectorFromString(@"getDicOfUserNameAndTagNames")]) {
-            id dic = safeCallNoArg(tm, NSSelectorFromString(@"getDicOfUserNameAndTagNames"));
-            if (dic && [dic isKindOfClass:[NSDictionary class]]) {
-                NSMutableArray *wxids = [NSMutableArray array];
-                for (NSString *wxid in dic) {
-                    id tags = dic[wxid];
-                    if ([tags isKindOfClass:[NSArray class]] && [tags containsObject:tagName]) {
-                        [wxids addObject:wxid];
-                    }
+        // 方法2: getContactsForLabel:
+        @try {
+            SEL sel = NSSelectorFromString(@"getContactsForLabel:");
+            if ([tm respondsToSelector:sel]) {
+                IMP imp = [tm methodForSelector:sel];
+                id (*func)(id, SEL, NSString *) = (void *)imp;
+                id result = func(tm, sel, tagName);
+                if (result && [result isKindOfClass:[NSArray class]] && [result count] > 0) {
+                    NSLog(@"[WeChatTagGroup] v28 getContactsForLabel('%@')=%lu个", tagName, (unsigned long)[result count]);
+                    return result;
                 }
-                return wxids;
             }
-        }
-    } @catch (NSException *e) {}
+        } @catch (NSException *e) {}
+        
+    } @catch (NSException *e) {
+        NSLog(@"[WeChatTagGroup] v28 getContactsForTag异常: %@", e);
+    }
+    
     return @[];
+}
+
+#pragma mark - 获取联系人详情
+
+static NSString *displayNameForWxid(NSString *wxid) {
+    if (!wxid || [wxid length] == 0) return wxid;
+    
+    @try {
+        Class scc = NSClassFromString(@"MMServiceCenter");
+        Class cmc = NSClassFromString(@"CContactMgr");
+        if (!scc || !cmc) return wxid;
+        
+        id sc = nil;
+        @try {
+            IMP imp = [scc methodForSelector:NSSelectorFromString(@"defaultCenter")];
+            id (*func)(id, SEL) = (void *)imp;
+            sc = func(scc, NSSelectorFromString(@"defaultCenter"));
+        } @catch (NSException *e) {}
+        if (!sc) return wxid;
+        
+        id cm = nil;
+        @try {
+            IMP imp = [sc methodForSelector:@selector(getService:)];
+            id (*func)(id, SEL, Class) = (void *)imp;
+            cm = func(sc, @selector(getService:), cmc);
+        } @catch (NSException *e) {}
+        if (!cm) return wxid;
+        
+        SEL sel = NSSelectorFromString(@"getContactByName:");
+        if (![cm respondsToSelector:sel]) return wxid;
+        
+        IMP imp = [cm methodForSelector:sel];
+        id (*func)(id, SEL, NSString *) = (void *)imp;
+        id contact = func(cm, sel, wxid);
+        if (!contact) return wxid;
+        
+        // 尝试获取备注 > 昵称
+        NSArray *remarkProps = @[@"m_nsRemark", @"remark", @"getRemark", @"m_nsRemarkInfo"];
+        for (NSString *prop in remarkProps) {
+            @try {
+                id val = [contact valueForKey:prop];
+                if (val && [val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
+                    return val;
+                }
+            } @catch (NSException *e) {}
+        }
+        
+        NSArray *nickProps = @[@"m_nsNickName", @"nickName", @"getNickName", @"m_nsDisplayName"];
+        for (NSString *prop in nickProps) {
+            @try {
+                id val = [contact valueForKey:prop];
+                if (val && [val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
+                    return val;
+                }
+            } @catch (NSException *e) {}
+        }
+        
+    } @catch (NSException *e) {}
+    
+    return wxid;
 }
 
 static NSString *tagNameForIndex(NSInteger idx) {
@@ -96,63 +149,74 @@ static NSString *tagNameForIndex(NSInteger idx) {
     return nil;
 }
 
-#pragma mark - 获取标签列表
+#pragma mark - 获取标签列表（优先用已知标签）
 
 static NSArray *getTagListFromTagMgr() {
     NSMutableArray *tags = [NSMutableArray array];
+    
+    // 优先测试已知标签（这些是 v15 验证过的）
+    NSArray *knownTags = @[@"客户", @"老师", @"商家", @"家长", @"置顶好友", @"商家家长", @"乐器商家", @"鲁岳商会", @"鲁岳商会-客户"];
+    
+    for (NSString *tag in knownTags) {
+        NSArray *contacts = getContactsForTag_v28(tag);
+        if (contacts.count > 0) {
+            [tags addObject:tag];
+            NSLog(@"[WeChatTagGroup] v28 找到标签'%@'，%lu个联系人", tag, (unsigned long)contacts.count);
+        }
+    }
+    
+    if (tags.count > 0) return tags;
+    
+    // 备用：从字典获取
     @try {
         Class scc = NSClassFromString(@"MMServiceCenter");
         Class tmc = NSClassFromString(@"ContactTagMgr");
-        if (!scc || !tmc) return tags;
-        id sc = safeCallNoArg(scc, @selector(defaultCenter));
-        if (!sc) return tags;
-        id tm = safeCall(sc, @selector(getService:), tmc);
-        if (!tm) tm = [[tmc alloc] init];
-        if (!tm) return tags;
-        
-        if ([tm respondsToSelector:NSSelectorFromString(@"getDicOfUserNameAndTagNames")]) {
-            id dic = safeCallNoArg(tm, NSSelectorFromString(@"getDicOfUserNameAndTagNames"));
-            if (dic && [dic isKindOfClass:[NSDictionary class]]) {
-                NSMutableSet *set = [NSMutableSet set];
-                for (id arr in [dic allValues]) {
-                    if ([arr isKindOfClass:[NSArray class]]) {
-                        for (id t in arr) {
-                            if ([t isKindOfClass:[NSString class]] && [(NSString *)t length] > 0) {
-                                [set addObject:t];
+        if (scc && tmc) {
+            IMP imp = [scc methodForSelector:NSSelectorFromString(@"defaultCenter")];
+            id (*func)(id, SEL) = (void *)imp;
+            id sc = func(scc, NSSelectorFromString(@"defaultCenter"));
+            if (sc) {
+                IMP imp2 = [sc methodForSelector:@selector(getService:)];
+                id (*func2)(id, SEL, Class) = (void *)imp2;
+                id tm = func2(sc, @selector(getService:), tmc);
+                if (tm) {
+                    SEL sel = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
+                    if ([tm respondsToSelector:sel]) {
+                        IMP imp3 = [tm methodForSelector:sel];
+                        id (*func3)(id, SEL) = (void *)imp3;
+                        id dic = func3(tm, sel);
+                        if (dic && [dic isKindOfClass:[NSDictionary class]]) {
+                            NSMutableSet *set = [NSMutableSet set];
+                            for (id arr in [dic allValues]) {
+                                if ([arr isKindOfClass:[NSArray class]]) {
+                                    for (id t in arr) {
+                                        if ([t isKindOfClass:[NSString class]] && [(NSString *)t length] > 0) {
+                                            [set addObject:t];
+                                        }
+                                    }
+                                }
                             }
+                            [tags addObjectsFromArray:[set allObjects]];
+                            NSLog(@"[WeChatTagGroup] v28 备用字典标签: %@", tags);
                         }
                     }
                 }
-                if (set.count > 0) [tags addObjectsFromArray:[set allObjects]];
             }
         }
-        
-        if (tags.count == 0) {
-            NSArray *known = @[@"客户", @"老师", @"商家", @"家长", @"置顶好友"];
-            for (NSString *tag in known) {
-                if ([tm respondsToSelector:NSSelectorFromString(@"getContactsForTagName:")]) {
-                    id r = safeCall(tm, NSSelectorFromString(@"getContactsForTagName:"), tag);
-                    if (r && [r isKindOfClass:[NSArray class]] && [r count] > 0) {
-                        [tags addObject:tag];
-                    }
-                }
-            }
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[WeChatTagGroup] getTagList error: %@", e);
-    }
+    } @catch (NSException *e) {}
+    
     return tags;
 }
 
 #pragma mark - Tab Bar
 
-@interface TagTabBar27 : UIView
+@interface TagTabBar28 : UIView
 @property (nonatomic, strong) NSArray *tabNames;
 @property (nonatomic, strong) NSMutableArray *buttons;
 @property (nonatomic, assign) NSInteger selectedIndex;
 @end
 
-@implementation TagTabBar27
+@implementation TagTabBar28
 
 - (instancetype)initWithFrame:(CGRect)frame tabNames:(NSArray *)names {
     self = [super initWithFrame:frame];
@@ -186,7 +250,7 @@ static NSArray *getTagListFromTagMgr() {
     for (NSInteger i = 0; i < self.tabNames.count; i++) {
         NSString *name = self.tabNames[i];
         CGSize size = [name sizeWithAttributes:@{NSFontAttributeName: font}];
-        CGFloat w = size.width + 26;
+        CGFloat w = MAX(size.width + 26, 60);
         
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
         btn.frame = CGRectMake(x, y, w, btnH);
@@ -227,10 +291,10 @@ static NSArray *getTagListFromTagMgr() {
     }
     
     g_selectedTab = idx;
+    NSLog(@"[WeChatTagGroup] v28 点击标签 idx=%ld name=%@", (long)idx, tagNameForIndex(idx));
     
     if (g_tableView) {
         [g_tableView reloadData];
-        NSLog(@"[WeChatTagGroup] v27 刷新列表，标签=%@", tagNameForIndex(idx));
     }
 }
 
@@ -248,26 +312,12 @@ static NSArray *getTagListFromTagMgr() {
 
 #pragma mark - DataSource
 
-@interface WeChatTagGroupDataSource : NSObject <UITableViewDataSource>
+@interface WeChatTagGroupDS : NSObject <UITableViewDataSource>
 @end
 
-@implementation WeChatTagGroupDataSource
+@implementation WeChatTagGroupDS
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    if (g_selectedTab == 0) {
-        if ([g_originalDataSource respondsToSelector:@selector(numberOfSectionsInTableView:)]) {
-            NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(numberOfSectionsInTableView:)];
-            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-            [inv setTarget:g_originalDataSource];
-            [inv setSelector:@selector(numberOfSectionsInTableView:)];
-            [inv setArgument:&tableView atIndex:2];
-            [inv invoke];
-            NSInteger ret = 1;
-            [inv getReturnValue:&ret];
-            return ret;
-        }
-        return 1;
-    }
     return 1;
 }
 
@@ -275,23 +325,28 @@ static NSArray *getTagListFromTagMgr() {
     NSString *tagName = tagNameForIndex(g_selectedTab);
     
     if (!tagName) {
-        if ([g_originalDataSource respondsToSelector:@selector(tableView:numberOfRowsInSection:)]) {
-            NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(tableView:numberOfRowsInSection:)];
-            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-            [inv setTarget:g_originalDataSource];
-            [inv setSelector:@selector(tableView:numberOfRowsInSection:)];
-            [inv setArgument:&tableView atIndex:2];
-            [inv setArgument:&section atIndex:3];
-            [inv invoke];
-            NSInteger ret = 0;
-            [inv getReturnValue:&ret];
-            return ret;
+        // 全部：调用原始 dataSource
+        if (g_originalDataSource && [g_originalDataSource respondsToSelector:@selector(tableView:numberOfRowsInSection:)]) {
+            @try {
+                NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(tableView:numberOfRowsInSection:)];
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setTarget:g_originalDataSource];
+                [inv setSelector:@selector(tableView:numberOfRowsInSection:)];
+                [inv setArgument:&tableView atIndex:2];
+                [inv setArgument:&section atIndex:3];
+                [inv invoke];
+                NSInteger ret = 0;
+                [inv getReturnValue:&ret];
+                NSLog(@"[WeChatTagGroup] v28 全部联系人: %ld", (long)ret);
+                return ret;
+            } @catch (NSException *e) {}
         }
         return 0;
     }
     
-    NSArray *wxids = getWxidsForTag(tagName);
-    NSLog(@"[WeChatTagGroup] v27 标签'%@'有%lu个联系人", tagName, (unsigned long)wxids.count);
+    // 具体标签
+    NSArray *wxids = getContactsForTag_v28(tagName);
+    NSLog(@"[WeChatTagGroup] v28 标签'%@'联系人: %ld", tagName, (long)wxids.count);
     return wxids.count;
 }
 
@@ -299,83 +354,49 @@ static NSArray *getTagListFromTagMgr() {
     NSString *tagName = tagNameForIndex(g_selectedTab);
     
     if (!tagName) {
-        if ([g_originalDataSource respondsToSelector:@selector(tableView:cellForRowAtIndexPath:)]) {
-            NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(tableView:cellForRowAtIndexPath:)];
-            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-            [inv setTarget:g_originalDataSource];
-            [inv setSelector:@selector(tableView:cellForRowAtIndexPath:)];
-            [inv setArgument:&tableView atIndex:2];
-            [inv setArgument:&indexPath atIndex:3];
-            [inv invoke];
-            __unsafe_unretained id ret = nil;
-            [inv getReturnValue:&ret];
-            return ret ?: [[UITableViewCell alloc] init];
+        // 全部：调用原始
+        if (g_originalDataSource && [g_originalDataSource respondsToSelector:@selector(tableView:cellForRowAtIndexPath:)]) {
+            @try {
+                NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(tableView:cellForRowAtIndexPath:)];
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setTarget:g_originalDataSource];
+                [inv setSelector:@selector(tableView:cellForRowAtIndexPath:)];
+                [inv setArgument:&tableView atIndex:2];
+                [inv setArgument:&indexPath atIndex:3];
+                [inv invoke];
+                __unsafe_unretained id ret = nil;
+                [inv getReturnValue:&ret];
+                if (ret) return ret;
+            } @catch (NSException *e) {}
         }
         return [[UITableViewCell alloc] init];
     }
     
-    NSArray *wxids = getWxidsForTag(tagName);
-    if ((NSInteger)indexPath.row >= (NSInteger)wxids.count) return [[UITableViewCell alloc] init];
+    // 过滤模式
+    NSArray *wxids = getContactsForTag_v28(tagName);
+    if ((NSInteger)indexPath.row >= (NSInteger)wxids.count) {
+        return [[UITableViewCell alloc] init];
+    }
     
     NSString *wxid = wxids[indexPath.row];
+    NSString *showName = displayNameForWxid(wxid);
     
-    @try {
-        Class scc = NSClassFromString(@"MMServiceCenter");
-        Class cmc = NSClassFromString(@"CContactMgr");
-        if (scc && cmc) {
-            id sc = safeCallNoArg(scc, @selector(defaultCenter));
-            if (sc) {
-                id cm = safeCall(sc, @selector(getService:), cmc);
-                if (cm && [cm respondsToSelector:NSSelectorFromString(@"getContactByName:")]) {
-                    id contact = safeCall(cm, NSSelectorFromString(@"getContactByName:"), wxid);
-                    if (contact) {
-                        NSString *showName = nil;
-                        for (NSString *prop in @[@"m_nsNickName", @"nickName", @"getNickName"]) {
-                            id val = [contact valueForKey:prop];
-                            if (val && [val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
-                                showName = val;
-                                break;
-                            }
-                        }
-                        NSString *remark = nil;
-                        for (NSString *prop in @[@"m_nsRemark", @"remark"]) {
-                            id val = [contact valueForKey:prop];
-                            if (val && [val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
-                                remark = val;
-                                break;
-                            }
-                        }
-                        
-                        NSString *finalName = remark ?: showName ?: wxid;
-                        NSLog(@"[WeChatTagGroup] v27 显示: %@ (tag=%@)", finalName, tagName);
-                        
-                        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"TagGroupCell"];
-                        if (!cell) {
-                            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"TagGroupCell"];
-                        }
-                        cell.textLabel.text = finalName;
-                        cell.detailTextLabel.text = [NSString stringWithFormat:@"🏷 %@", tagName];
-                        cell.detailTextLabel.textColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
-                        return cell;
-                    }
-                }
-            }
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[WeChatTagGroup] v27 cell error: %@", e);
-    }
-    
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"TagGroupSimple"];
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"TagCell"];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"TagGroupSimple"];
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"TagCell"];
     }
-    cell.textLabel.text = [NSString stringWithFormat:@"👤 %@", wxid];
+    cell.textLabel.text = showName;
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"🏷 %@", tagName];
+    cell.detailTextLabel.textColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
+    
+    NSLog(@"[WeChatTagGroup] v28 cell[%ld]: %@ (wxid=%@)", (long)indexPath.row, showName, wxid);
+    
     return cell;
 }
 
 @end
 
-static WeChatTagGroupDataSource *g_dataSource = nil;
+static WeChatTagGroupDS *g_ds = nil;
 
 #pragma mark - Hook
 
@@ -399,58 +420,51 @@ static WeChatTagGroupDataSource *g_dataSource = nil;
         if (g_tableView) return;
         g_tableView = tv;
         
-        g_originalDelegate = tv.delegate;
         g_originalDataSource = tv.dataSource;
+        NSLog(@"[WeChatTagGroup] v28 dataSource=%@", NSStringFromClass([g_originalDataSource class]));
         
-        NSLog(@"[WeChatTagGroup] v27 delegate=%@ dataSource=%@",
-              NSStringFromClass([g_originalDelegate class]),
-              NSStringFromClass([g_originalDataSource class]));
-        
-        // 获取标签
+        // 获取标签（优先测试已知标签是否有联系人）
         g_allTags = getTagListFromTagMgr();
+        NSLog(@"[WeChatTagGroup] v28 最终标签列表: %@", g_allTags);
+        
         NSMutableArray *tabNames = [NSMutableArray arrayWithObject:@"全部"];
         [tabNames addObjectsFromArray:g_allTags];
         
-        UIView *origHeader = tv.tableHeaderView;
+        // 创建 header：搜索栏 + 标签栏
         CGFloat searchH = 55;
         CGFloat tabH = 50;
         CGFloat totalH = searchH + tabH;
+        CGFloat w = tv.frame.size.width;
         
-        // 创建组合 header：保留原有搜索栏 + 添加标签栏
-        UIView *headerContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, tv.frame.size.width, totalH)];
-        headerContainer.backgroundColor = [UIColor whiteColor];
-        headerContainer.tag = 202427;
+        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, totalH)];
+        header.backgroundColor = [UIColor whiteColor];
         
-        // 保留原有搜索栏（保持原有功能）
-        if (origHeader) {
-            origHeader.frame = CGRectMake(0, 0, tv.frame.size.width, searchH);
-            [headerContainer addSubview:origHeader];
-        } else {
-            UISearchBar *sb = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, tv.frame.size.width, searchH)];
-            sb.placeholder = @"搜索";
-            [headerContainer addSubview:sb];
-        }
+        // 搜索栏（重建，确保可见）
+        UISearchBar *sb = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, w, searchH)];
+        sb.placeholder = @"搜索";
+        sb.searchBarStyle = UISearchBarStyleMinimal;
+        sb.backgroundColor = [UIColor whiteColor];
+        [header addSubview:sb];
         
         // 标签栏
-        TagTabBar27 *tabBar = [[TagTabBar27 alloc]
-            initWithFrame:CGRectMake(0, searchH, tv.frame.size.width, tabH)
+        TagTabBar28 *tabBar = [[TagTabBar28 alloc]
+            initWithFrame:CGRectMake(0, searchH, w, tabH)
                   tabNames:tabNames];
-        tabBar.tag = 20242701;
-        [headerContainer addSubview:tabBar];
+        tabBar.tag = 202428;
+        [header addSubview:tabBar];
         
-        tv.tableHeaderView = headerContainer;
+        tv.tableHeaderView = header;
         
         // 替换 dataSource
-        if (!g_dataSource) g_dataSource = [[WeChatTagGroupDataSource alloc] init];
-        tv.dataSource = g_dataSource;
+        if (!g_ds) g_ds = [[WeChatTagGroupDS alloc] init];
+        tv.dataSource = g_ds;
         
         [tv reloadData];
-        NSLog(@"[WeChatTagGroup] v27 设置完成，标签:%@", g_allTags);
     });
 }
 
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] v27功能版已加载");
+    NSLog(@"[WeChatTagGroup] v28 已加载");
 }
