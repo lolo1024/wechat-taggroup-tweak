@@ -1,11 +1,14 @@
 /**
- * WeChat Tag Group - v24 功能版
- * 修复：获取标签列表 + 搜索栏位置
+ * WeChat Tag Group - v25 功能版
+ * 修复：标签栏加到 tableHeaderView，替换搜索栏位置
  */
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+
+static NSArray *g_allTags = nil;
+static NSInteger g_selectedTab = 0;
 
 #pragma mark - 安全调用
 
@@ -51,6 +54,8 @@ static id safeCallNoArg(id obj, SEL selector) {
 #pragma mark - 获取所有标签
 
 static NSArray *getAllTagNames() {
+    if (g_allTags) return g_allTags;
+    
     @try {
         Class scc = NSClassFromString(@"MMServiceCenter");
         Class tmc = NSClassFromString(@"ContactTagMgr");
@@ -63,17 +68,7 @@ static NSArray *getAllTagNames() {
         if (!tm) { tm = [[tmc alloc] init]; }
         if (!tm) return @[];
         
-        // 方法1: 尝试 getAllTagNames
-        SEL sel1 = NSSelectorFromString(@"getAllTagNames");
-        if ([tm respondsToSelector:sel1]) {
-            id result = safeCallNoArg(tm, sel1);
-            if (result && [result isKindOfClass:[NSArray class]] && [result count] > 0) {
-                NSLog(@"[WeChatTagGroup] getAllTagNames 返回 %lu 个", (unsigned long)[result count]);
-                return result;
-            }
-        }
-        
-        // 方法2: 从 getDicOfUserNameAndTagNames 提取
+        // 从 getDicOfUserNameAndTagNames 提取
         SEL sel2 = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
         if ([tm respondsToSelector:sel2]) {
             id dic = safeCallNoArg(tm, sel2);
@@ -86,75 +81,115 @@ static NSArray *getAllTagNames() {
                                 [nameSet addObject:tag];
                             }
                         }
-                    } else if ([tags isKindOfClass:[NSString class]] && [(NSString*)tags length] > 0) {
-                        [nameSet addObject:tags];
                     }
                 }
                 if (nameSet.count > 0) {
-                    NSLog(@"[WeChatTagGroup] getDic 提取到 %lu 个标签", (unsigned long)nameSet.count);
-                    return [nameSet allObjects];
+                    g_allTags = [nameSet allObjects];
+                    return g_allTags;
                 }
             }
         }
         
-        // 方法3: 尝试已知标签
+        // 备用: 已知标签
         NSArray *knownTags = @[@"客户", @"老师", @"商家", @"家长", @"置顶好友"];
-        NSMutableArray *existingTags = [NSMutableArray array];
         for (NSString *tag in knownTags) {
             SEL sel3 = NSSelectorFromString(@"getContactsForTagName:");
             if ([tm respondsToSelector:sel3]) {
                 id result = safeCall(tm, sel3, tag);
                 if (result && [result isKindOfClass:[NSArray class]] && [result count] > 0) {
-                    [existingTags addObject:tag];
+                    if (!g_allTags) g_allTags = [NSMutableArray array];
+                    [(NSMutableArray *)g_allTags addObject:tag];
                 }
             }
         }
-        if (existingTags.count > 0) {
-            NSLog(@"[WeChatTagGroup] 逐个查询找到标签: %@", existingTags);
-            return existingTags;
+        
+    } @catch (NSException *e) {}
+    return g_allTags ?: @[];
+}
+
+static NSArray *getWxidsForTag(NSString *tagName) {
+    @try {
+        Class scc = NSClassFromString(@"MMServiceCenter");
+        Class tmc = NSClassFromString(@"ContactTagMgr");
+        if (!scc || !tmc) return @[];
+        id sc = safeCallNoArg(scc, @selector(defaultCenter));
+        if (!sc) return @[];
+        id tm = safeCall(sc, @selector(getService:), tmc);
+        if (!tm) { tm = [[tmc alloc] init]; }
+        if (!tm) return @[];
+        
+        SEL sel = NSSelectorFromString(@"getContactsForTagName:");
+        if ([tm respondsToSelector:sel]) {
+            id result = safeCall(tm, sel, tagName);
+            if (result && [result isKindOfClass:[NSArray class]]) return result;
         }
         
-    } @catch (NSException *e) {
-        NSLog(@"[WeChatTagGroup] getAllTagNames error: %@", e);
-    }
+        // 备用
+        SEL sel2 = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
+        if ([tm respondsToSelector:sel2]) {
+            id dic = safeCallNoArg(tm, sel2);
+            if (dic && [dic isKindOfClass:[NSDictionary class]]) {
+                NSMutableArray *wxids = [NSMutableArray array];
+                for (NSString *wxid in dic) {
+                    id tags = dic[wxid];
+                    if ([tags isKindOfClass:[NSArray class]] && [tags containsObject:tagName]) {
+                        [wxids addObject:wxid];
+                    }
+                }
+                return wxids;
+            }
+        }
+    } @catch (NSException *e) {}
     return @[];
 }
 
-static void showDebug(NSString *msg) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        @try {
-            UIViewController *vc = [UIApplication sharedApplication].keyWindow.rootViewController;
-            while (vc.presentedViewController) vc = vc.presentedViewController;
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"v24 Debug"
-                                                                           message:msg
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [vc presentViewController:alert animated:YES completion:nil];
-        } @catch (NSException *e) {}
-    });
-}
+#pragma mark - 创建组合 HeaderView（搜索栏+标签栏）
 
-#pragma mark - 创建标签栏
-
-static UIView *createTagBar(NSArray *tabNames, CGFloat width) {
-    CGFloat h = 44;
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, h)];
-    bar.backgroundColor = [UIColor whiteColor];
+static UIView *createHeaderView(UISearchBar *searchBar, NSArray *tabNames, UITableView *tableView) {
+    CGFloat searchH = searchBar ? 55 : 0;
+    CGFloat tabH = 50;
+    CGFloat totalH = searchH + tabH;
+    CGFloat width = tableView.frame.size.width;
     
-    UIFont *font = [UIFont systemFontOfSize:14];
+    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, totalH)];
+    container.backgroundColor = [UIColor whiteColor];
+    container.tag = 202425;
+    
+    // 搜索栏
+    if (searchBar) {
+        searchBar.frame = CGRectMake(0, 0, width, searchH);
+        [container addSubview:searchBar];
+    }
+    
+    // 标签栏（紧接搜索栏下方）
+    UIView *tabBar = [[UIView alloc] initWithFrame:CGRectMake(0, searchH, width, tabH)];
+    tabBar.backgroundColor = [UIColor whiteColor];
+    tabBar.tag = 202426;
+    [container addSubview:tabBar];
+    
+    // 顶部绿色分隔线
+    UIView *greenLine = [[UIView alloc] initWithFrame:CGRectMake(0, searchH, width, 2)];
+    greenLine.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
+    [container addSubview:greenLine];
+    
+    // 标签按钮
+    UIFont *font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     CGFloat x = 15;
     NSMutableArray *btns = [NSMutableArray array];
     
     for (NSInteger i = 0; i < tabNames.count; i++) {
         NSString *name = tabNames[i];
         CGSize size = [name sizeWithAttributes:@{NSFontAttributeName: font}];
-        CGFloat w = size.width + 24;
-        BOOL isSelected = (i == 0);
+        CGFloat w = size.width + 26;
+        BOOL isSelected = (i == g_selectedTab);
         
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
         [btn setTitle:name forState:UIControlStateNormal];
         btn.titleLabel.font = font;
-        btn.frame = CGRectMake(x, (h - 28) / 2, w, 28);
+        btn.frame = CGRectMake(x, (tabH - 30) / 2, w, 30);
+        btn.layer.cornerRadius = 15;
+        btn.layer.masksToBounds = YES;
+        btn.userInteractionEnabled = YES;
         
         if (isSelected) {
             btn.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
@@ -163,18 +198,80 @@ static UIView *createTagBar(NSArray *tabNames, CGFloat width) {
             btn.backgroundColor = [UIColor colorWithRed:0.93 green:0.93 blue:0.93 alpha:1.0];
             [btn setTitleColor:[UIColor darkGrayColor] forState:UIControlStateNormal];
         }
-        btn.layer.cornerRadius = 14;
-        btn.layer.masksToBounds = YES;
-        btn.tag = 100 + i;
         
-        [bar addSubview:btn];
+        btn.tag = 100 + i;
+        [tabBar addSubview:btn];
         [btns addObject:btn];
         x += w + 10;
     }
     
-    objc_setAssociatedObject(bar, "tabButtons", btns, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    return bar;
+    objc_setAssociatedObject(tabBar, "tabButtons", btns, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(container, "tabBar", tabBar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    
+    // 给按钮加点击事件
+    for (NSInteger i = 0; i < btns.count; i++) {
+        UIButton *btn = btns[i];
+        NSInteger index = i;
+        
+        [btn addTarget:nil action:@selector(tagTabTapped:) forControlEvents:UIControlEventTouchUpInside];
+        
+        // 用 associated object 存储索引
+        objc_setAssociatedObject(btn, "tabIndexValue", @(index), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    
+    return container;
 }
+
+@interface UIButton (TagTab25)
+@end
+
+@implementation UIButton (TagTab25)
+
++ (void)load {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        SEL orig = @selector(tagTabTapped:);
+        SEL swiz = @selector(swizzled_tagTabTapped:);
+        Method m1 = class_getInstanceMethod([UIButton class], orig);
+        Method m2 = class_getInstanceMethod([UIButton class], swiz);
+        if (m1 && m2) {
+            method_exchangeImplementations(m1, m2);
+        }
+    });
+}
+
+- (void)swizzled_tagTabTapped:(UIButton *)sender {
+    NSNumber *num = objc_getAssociatedObject(sender, "tabIndexValue");
+    if (!num) {
+        [self swizzled_tagTabTapped:sender];
+        return;
+    }
+    
+    NSInteger idx = [num integerValue];
+    g_selectedTab = idx;
+    
+    // 更新所有按钮样式
+    UIView *tabBar = sender.superview;
+    if (tabBar) {
+        NSArray *btns = objc_getAssociatedObject(tabBar, "tabButtons");
+        for (NSInteger i = 0; i < btns.count; i++) {
+            UIButton *b = btns[i];
+            if (i == idx) {
+                b.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
+                [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            } else {
+                b.backgroundColor = [UIColor colorWithRed:0.93 green:0.93 blue:0.93 alpha:1.0];
+                [b setTitleColor:[UIColor darkGrayColor] forState:UIControlStateNormal];
+            }
+        }
+    }
+    
+    NSLog(@"[WeChatTagGroup] 切换到标签: %ld", (long)idx);
+    
+    [self swizzled_tagTabTapped:sender];
+}
+
+@end
 
 #pragma mark - Hook
 
@@ -183,13 +280,10 @@ static UIView *createTagBar(NSArray *tabNames, CGFloat width) {
 - (void)viewDidLoad {
     %orig;
     
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        NSMutableString *debug = [NSMutableString string];
-        
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         UIView *rootView = ((UIViewController *)self).view;
-        [debug appendFormat:@"视图层级:\n"];
+        if (!rootView) return;
         
-        // 找 TableView
         UITableView *tv = nil;
         for (UIView *sub in rootView.subviews) {
             if ([sub isKindOfClass:[UITableView class]]) {
@@ -197,96 +291,37 @@ static UIView *createTagBar(NSArray *tabNames, CGFloat width) {
                 break;
             }
         }
+        if (!tv) return;
         
-        if (!tv) {
-            [debug appendString:@"❌ 没找到 TableView"];
-            showDebug(debug);
-            return;
-        }
-        
-        [debug appendFormat:@"✅ 找到 TableView: %@\n\n", NSStringFromClass([tv class])];
-        
-        // 检查是否已有标签栏
-        UIView *existingBar = [tv viewWithTag:202424];
-        if (existingBar) {
-            [debug appendString:@"已有标签栏，跳过"];
-            showDebug(debug);
-            return;
-        }
-        
-        // 找搜索栏（TableView 的 headerView 或第一个子视图）
-        UIView *searchBar = nil;
-        CGFloat searchBarBottom = 0;
-        
-        // 先看 tableHeaderView
-        UIView *thv = tv.tableHeaderView;
-        if (thv) {
-            [debug appendFormat:@"tableHeaderView: %@ frame=%@\n", 
-             NSStringFromClass([thv class]), NSStringFromCGRect(thv.frame)];
-            searchBar = thv;
-            searchBarBottom = thv.frame.origin.y + thv.frame.size.height;
-        }
-        
-        // 看 TableView 的前几个 subviews
-        [debug appendFormat:@"TableView subviews:\n"];
-        for (NSInteger i = 0; i < tv.subviews.count && i < 6; i++) {
-            UIView *sub = tv.subviews[i];
-            [debug appendFormat:@"%ld. %@ frame=%@ tag=%ld\n", 
-             (long)i, NSStringFromClass([sub class]), 
-             NSStringFromCGRect(sub.frame), (long)sub.tag];
-        }
-        
-        // 找搜索栏位置
-        for (UIView *sub in tv.subviews) {
-            CGRect f = sub.frame;
-            if (f.origin.y < 60 && f.size.height > 30 && f.size.height < 80 && f.size.width > 300) {
-                searchBar = sub;
-                searchBarBottom = f.origin.y + f.size.height;
-                [debug appendFormat:@"\n找到搜索栏?: %@ frame=%@\n", 
-                 NSStringFromClass([sub class]), NSStringFromCGRect(f)];
-                break;
-            }
-        }
+        // 检查是否已有
+        if ([tv.tableHeaderView viewWithTag:202425]) return;
         
         // 获取标签
         NSArray *tags = getAllTagNames();
-        [debug appendFormat:@"\n找到标签 (%lu):\n", (unsigned long)tags.count];
-        for (NSString *t in tags) {
-            [debug appendFormat:@"- %@\n", t];
-        }
+        NSLog(@"[WeChatTagGroup] v25 获取标签: %@", tags);
         
-        // 创建标签栏
+        // 创建标签列表
         NSMutableArray *tabNames = [NSMutableArray arrayWithObject:@"全部"];
         [tabNames addObjectsFromArray:tags];
         
-        UIView *tabBar = createTagBar(tabNames, tv.frame.size.width);
-        tabBar.tag = 202424;
-        
-        // 把标签栏插入到搜索栏下方
-        if (searchBar) {
-            // 把标签栏加到 TableView，然后调整到搜索栏下方
-            CGFloat yPos = searchBarBottom;
-            tabBar.frame = CGRectMake(0, yPos, tv.frame.size.width, 44);
-            [tv addSubview:tabBar];
-            [tv bringSubviewToFront:tabBar];
-            
-            [debug appendFormat:@"\n✅ 标签栏已添加，位置 y=%.0f\n", yPos];
-        } else {
-            // 没有搜索栏，加到 TableView 顶部
-            tabBar.frame = CGRectMake(0, 0, tv.frame.size.width, 44);
-            [tv addSubview:tabBar];
-            [tv bringSubviewToFront:tabBar];
-            
-            [debug appendFormat:@"\n✅ 标签栏已添加（无搜索栏），位置 y=0\n"];
+        // 获取搜索栏
+        UISearchBar *searchBar = (UISearchBar *)tv.tableHeaderView;
+        if (![searchBar isKindOfClass:[UISearchBar class]]) {
+            searchBar = nil;
         }
         
-        showDebug(debug);
-        NSLog(@"[WeChatTagGroup] v24: %@", debug);
+        // 创建组合 headerView
+        UIView *header = createHeaderView(searchBar, tabNames, tv);
+        
+        // 设置为 tableHeaderView
+        tv.tableHeaderView = header;
+        
+        NSLog(@"[WeChatTagGroup] v25 已设置 headerView: %@", NSStringFromCGRect(header.frame));
     });
 }
 
 %end
 
 %ctor {
-    NSLog(@"[WeChatTagGroup] v24功能版已加载");
+    NSLog(@"[WeChatTagGroup] v25功能版已加载");
 }
