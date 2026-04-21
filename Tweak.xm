@@ -15,10 +15,10 @@ static id g_originalDelegate = nil;
 static id g_originalDataSource = nil;
 static UITableView *g_tableView = nil;
 
-// 原始方法实现
-static NSInteger (*orig_numberOfSections)(id, SEL, UITableView *) = NULL;
-static NSInteger (*orig_numberOfRowsInSection)(id, SEL, UITableView *, NSInteger) = NULL;
-static UITableViewCell *(*orig_cellForRow)(id, SEL, UITableView *, NSIndexPath *) = NULL;
+// 原始方法实现（用 IMP 类型避免 void* 函数指针转换问题）
+static IMP orig_numberOfSections_impl = NULL;
+static IMP orig_numberOfRowsInSection_impl = NULL;
+static IMP orig_cellForRow_impl = NULL;
 
 #pragma mark - 安全调用
 
@@ -215,13 +215,19 @@ static NSString *tagNameForIndex(NSInteger idx) {
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     if (g_selectedTab == 0) {
-        // 全部: 调用原始方法
-        if (orig_numberOfSections && g_originalDataSource) {
-            return orig_numberOfSections(g_originalDataSource, @selector(numberOfSectionsInTableView:), tableView);
+        if (orig_numberOfSections_impl && g_originalDataSource) {
+            NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(numberOfSectionsInTableView:)];
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:g_originalDataSource];
+            [inv setSelector:@selector(numberOfSectionsInTableView:)];
+            [inv setArgument:&tableView atIndex:2];
+            [inv invoke];
+            NSInteger ret = 0;
+            [inv getReturnValue:&ret];
+            return ret;
         }
         return 1;
     }
-    // 过滤: 只有1个 section
     return 1;
 }
 
@@ -230,8 +236,17 @@ static NSString *tagNameForIndex(NSInteger idx) {
     
     if (!tagName) {
         // 全部
-        if (orig_numberOfRowsInSection && g_originalDataSource) {
-            return orig_numberOfRowsInSection(g_originalDataSource, @selector(tableView:numberOfRowsInSection:), tableView, section);
+        if (orig_numberOfRowsInSection_impl && g_originalDataSource) {
+            NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(tableView:numberOfRowsInSection:)];
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:g_originalDataSource];
+            [inv setSelector:@selector(tableView:numberOfRowsInSection:)];
+            [inv setArgument:&tableView atIndex:2];
+            [inv setArgument:&section atIndex:3];
+            [inv invoke];
+            NSInteger ret = 0;
+            [inv getReturnValue:&ret];
+            return ret;
         }
         return 0;
     }
@@ -247,8 +262,17 @@ static NSString *tagNameForIndex(NSInteger idx) {
     
     if (!tagName) {
         // 全部: 调用原始
-        if (orig_cellForRow && g_originalDataSource) {
-            return orig_cellForRow(g_originalDataSource, @selector(tableView:cellForRowAtIndexPath:), tableView, indexPath);
+        if (orig_cellForRow_impl && g_originalDataSource) {
+            NSMethodSignature *sig = [g_originalDataSource methodSignatureForSelector:@selector(tableView:cellForRowAtIndexPath:)];
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:g_originalDataSource];
+            [inv setSelector:@selector(tableView:cellForRowAtIndexPath:)];
+            [inv setArgument:&tableView atIndex:2];
+            [inv setArgument:&indexPath atIndex:3];
+            [inv invoke];
+            __unsafe_unretained id ret = nil;
+            [inv getReturnValue:&ret];
+            return ret ?: [[UITableViewCell alloc] init];
         }
         return [[UITableViewCell alloc] init];
     }
@@ -359,24 +383,24 @@ static WeChatTagGroupDataSource *g_dataSource = nil;
             SEL s1 = @selector(numberOfSectionsInTableView:);
             if ([g_originalDataSource respondsToSelector:s1]) {
                 Method m1 = class_getInstanceMethod(cls, s1);
-                if (m1) orig_numberOfSections = (void *)method_getImplementation(m1);
+                if (m1) orig_numberOfSections_impl = method_getImplementation(m1);
             }
             
             SEL s2 = @selector(tableView:numberOfRowsInSection:);
             if ([g_originalDataSource respondsToSelector:s2]) {
                 Method m2 = class_getInstanceMethod(cls, s2);
-                if (m2) orig_numberOfRowsInSection = (void *)method_getImplementation(m2);
+                if (m2) orig_numberOfRowsInSection_impl = method_getImplementation(m2);
             }
             
             SEL s3 = @selector(tableView:cellForRowAtIndexPath:);
             if ([g_originalDataSource respondsToSelector:s3]) {
                 Method m3 = class_getInstanceMethod(cls, s3);
-                if (m3) orig_cellForRow = (void *)method_getImplementation(m3);
+                if (m3) orig_cellForRow_impl = method_getImplementation(m3);
             }
         }
         
         // 获取标签
-        g_allTags = [self getTagList];
+        g_allTags = [(id)self getTagList];
         NSMutableArray *tabNames = [NSMutableArray arrayWithObject:@"全部"];
         [tabNames addObjectsFromArray:g_allTags];
         
