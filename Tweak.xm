@@ -1,6 +1,6 @@
 /**
- * WeChat Tag Group - 调试版 v20
- * 检测 hook 是否触发
+ * WeChat Tag Group - 调试版 v21
+ * 检查所有标签 + 修复联系人获取
  */
 
 #import <UIKit/UIKit.h>
@@ -91,94 +91,163 @@ static void showDebugAlert(NSString *title, NSString *message) {
 @implementation TagContact
 @end
 
-static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
-    NSMutableArray<TagContact *> *result = [NSMutableArray array];
-    
+// 获取所有标签名称
+static NSArray *getAllTagNames() {
     @try {
         Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
-        Class contactMgrClass = NSClassFromString(@"CContactMgr");
         Class tagMgrClass = NSClassFromString(@"ContactTagMgr");
         
-        if (!serviceCenterClass || !contactMgrClass || !tagMgrClass) {
-            return result;
+        if (!serviceCenterClass || !tagMgrClass) return @[];
+        
+        // 使用 NSInvocation（和 v15 一样的方式）
+        id serviceCenter = safeCallNoArg(serviceCenterClass, @selector(defaultCenter));
+        if (!serviceCenter) {
+            NSLog(@"[WeChatTagGroup] serviceCenter 为空");
+            return @[];
         }
         
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        id serviceCenter = [serviceCenterClass performSelector:@selector(defaultCenter)];
-        if (!serviceCenter) return result;
+        id tagMgr = safeCall(serviceCenter, @selector(getService:), tagMgrClass);
+        if (!tagMgr) {
+            NSLog(@"[WeChatTagGroup] tagMgr 为空，尝试 alloc init");
+            tagMgr = [[tagMgrClass alloc] init];
+        }
         
-        id contactMgr = [serviceCenter performSelector:@selector(getService:) withObject:contactMgrClass];
-        id tagMgr = [serviceCenter performSelector:@selector(getService:) withObject:tagMgrClass];
+        if (!tagMgr) return @[];
+        
+        // 尝试获取所有标签
+        NSMutableArray *tagNames = [NSMutableArray array];
+        
+        // 方法1: getAllTagNames
+        SEL allTagsSel = NSSelectorFromString(@"getAllTagNames");
+        if ([tagMgr respondsToSelector:allTagsSel]) {
+            id result = safeCallNoArg(tagMgr, allTagsSel);
+            if (result && [result isKindOfClass:[NSArray class]]) {
+                return result;
+            }
+        }
+        
+        // 方法2: getDicOfUserNameAndTagNames
+        SEL dicSel = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
+        if ([tagMgr respondsToSelector:dicSel]) {
+            id dic = safeCallNoArg(tagMgr, dicSel);
+            if (dic && [dic isKindOfClass:[NSDictionary class]]) {
+                NSMutableSet *names = [NSMutableSet set];
+                for (NSArray *tags in [dic allValues]) {
+                    if ([tags isKindOfClass:[NSArray class]]) {
+                        [names addObjectsFromArray:tags];
+                    }
+                }
+                return [names allObjects];
+            }
+        }
+        
+        return tagNames;
+        
+    } @catch (NSException *e) {
+        NSLog(@"[WeChatTagGroup] getAllTagNames error: %@", e);
+        return @[];
+    }
+}
+
+// 获取指定标签的联系人wxid列表
+static NSArray *getWxidsForTag(NSString *tagName) {
+    @try {
+        Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
+        Class tagMgrClass = NSClassFromString(@"ContactTagMgr");
+        
+        if (!serviceCenterClass || !tagMgrClass) return @[];
+        
+        id serviceCenter = safeCallNoArg(serviceCenterClass, @selector(defaultCenter));
+        if (!serviceCenter) return @[];
+        
+        id tagMgr = safeCall(serviceCenter, @selector(getService:), tagMgrClass);
         if (!tagMgr) {
             tagMgr = [[tagMgrClass alloc] init];
         }
-        #pragma clang diagnostic pop
         
-        if (!contactMgr || !tagMgr) return result;
+        if (!tagMgr) return @[];
         
-        SEL getContactsSel = NSSelectorFromString(@"getContactsForTagName:");
-        if (![tagMgr respondsToSelector:getContactsSel]) return result;
-        
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        NSArray *wxidArray = [tagMgr performSelector:getContactsSel withObject:tagName];
-        #pragma clang diagnostic pop
-        
-        if (!wxidArray || ![wxidArray isKindOfClass:[NSArray class]]) return result;
-        
-        SEL getContactSel = NSSelectorFromString(@"getContactByName:");
-        
-        for (NSString *wxid in wxidArray) {
-            if (![wxid isKindOfClass:[NSString class]]) continue;
-            
-            TagContact *contact = [[TagContact alloc] init];
-            contact.wxid = wxid;
-            
-            #pragma clang diagnostic push
-            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            id contactObj = [contactMgr performSelector:getContactSel withObject:wxid];
-            #pragma clang diagnostic pop
-            
-            if (contactObj) {
-                for (NSString *method in @[@"getNickName", @"nickName", @"m_nsNickName"]) {
-                    #pragma clang diagnostic push
-                    #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                    id val = [contactObj performSelector:NSSelectorFromString(method)];
-                    #pragma clang diagnostic pop
-                    if (val && [val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
-                        contact.nickName = val;
-                        break;
-                    }
-                }
-                
-                for (NSString *method in @[@"getRemark", @"m_nsRemark", @"remark"]) {
-                    #pragma clang diagnostic push
-                    #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                    id val = [contactObj performSelector:NSSelectorFromString(method)];
-                    #pragma clang diagnostic pop
-                    if (val && [val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
-                        contact.remark = val;
-                        break;
-                    }
-                }
+        // 尝试 getContactsForTagName:
+        SEL sel = NSSelectorFromString(@"getContactsForTagName:");
+        if ([tagMgr respondsToSelector:sel]) {
+            id result = safeCall(tagMgr, sel, tagName);
+            if (result && [result isKindOfClass:[NSArray class]]) {
+                return result;
             }
-            
-            if (!contact.remark || [contact.remark length] == 0) {
-                contact.remark = contact.nickName;
-            }
-            
-            [result addObject:contact];
         }
         
+        // 备选: getDicOfUserNameAndTagNames 然后过滤
+        SEL dicSel = NSSelectorFromString(@"getDicOfUserNameAndTagNames");
+        if ([tagMgr respondsToSelector:dicSel]) {
+            id dic = safeCallNoArg(tagMgr, dicSel);
+            if (dic && [dic isKindOfClass:[NSDictionary class]]) {
+                NSMutableArray *wxids = [NSMutableArray array];
+                for (NSString *wxid in dic) {
+                    id tags = dic[wxid];
+                    if ([tags isKindOfClass:[NSArray class]] && [tags containsObject:tagName]) {
+                        [wxids addObject:wxid];
+                    }
+                }
+                return wxids;
+            }
+        }
+        
+        return @[];
+        
     } @catch (NSException *e) {
-        NSLog(@"[WeChatTagGroup] getContactsForTag error: %@", e);
+        NSLog(@"[WeChatTagGroup] getWxidsForTag error: %@", e);
+        return @[];
     }
-    
-    return result;
 }
 
-#pragma mark - Hook NewMainFrameViewController
+// 获取联系人详情
+static TagContact *getContactDetail(NSString *wxid) {
+    @try {
+        Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
+        Class contactMgrClass = NSClassFromString(@"CContactMgr");
+        
+        if (!serviceCenterClass || !contactMgrClass) return nil;
+        
+        id serviceCenter = safeCallNoArg(serviceCenterClass, @selector(defaultCenter));
+        if (!serviceCenter) return nil;
+        
+        id contactMgr = safeCall(serviceCenter, @selector(getService:), contactMgrClass);
+        if (!contactMgr) return nil;
+        
+        id contact = safeCall(contactMgr, NSSelectorFromString(@"getContactByName:"), wxid);
+        if (!contact) return nil;
+        
+        TagContact *result = [[TagContact alloc] init];
+        result.wxid = wxid;
+        
+        for (NSString *method in @[@"getNickName", @"nickName", @"m_nsNickName"]) {
+            id val = safeCallNoArg(contact, NSSelectorFromString(method));
+            if (val && [val isKindOfClass:[NSString class]] && [(NSString*)val length] > 0) {
+                result.nickName = val;
+                break;
+            }
+        }
+        
+        for (NSString *method in @[@"getRemark", @"m_nsRemark", @"remark"]) {
+            id val = safeCallNoArg(contact, NSSelectorFromString(method));
+            if (val && [val isKindOfClass:[NSString class]] && [(NSString*)val length] > 0) {
+                result.remark = val;
+                break;
+            }
+        }
+        
+        if (!result.remark || [result.remark length] == 0) {
+            result.remark = result.nickName;
+        }
+        
+        return result;
+        
+    } @catch (NSException *e) {
+        return nil;
+    }
+}
+
+#pragma mark - Hook
 
 @class NewMainFrameViewController;
 
@@ -194,61 +263,162 @@ static NSArray<TagContact *> *getContactsForTag(NSString *tagName) {
         UIViewController *vc = (UIViewController *)self;
         UIView *myView = vc.view;
         
-        if (!myView) {
-            showDebugAlert(@"v20 Debug", @"Hook触发但view为空!");
-            return;
+        if (!myView) return;
+        
+        // 1. 获取所有标签
+        NSArray *allTags = getAllTagNames();
+        
+        // 2. 获取"客户"标签的联系人
+        NSArray *wxids = getWxidsForTag(kTargetTagName);
+        
+        NSMutableString *info = [NSMutableString string];
+        [info appendFormat:@"=== v21 调试信息 ===\n\n"];
+        [info appendFormat:@"所有标签 (%lu个):\n", (unsigned long)[allTags count]];
+        for (NSString *tag in allTags) {
+            [info appendFormat:@"• %@\n", tag];
         }
         
-        // 检查视图层级
-        NSMutableString *hierarchy = [NSMutableString string];
-        [hierarchy appendFormat:@"视图层级:\n"];
-        [hierarchy appendFormat:@"- root view: %@\n", NSStringFromClass([myView class])];
-        [hierarchy appendFormat:@"- subviews数量: %lu\n\n", (unsigned long)[myView.subviews count]];
+        [info appendFormat:@"\n[%@] 标签联系人 wxid 列表:\n", kTargetTagName];
+        [info appendFormat:@"数量: %lu\n", (unsigned long)[wxids count]];
         
-        for (NSInteger i = 0; i < myView.subviews.count && i < 10; i++) {
-            UIView *sub = myView.subviews[i];
-            [hierarchy appendFormat:@"%ld. %@ (frame: %@)\n", (long)i, NSStringFromClass([sub class]), NSStringFromCGRect(sub.frame)];
+        for (NSString *wxid in wxids) {
+            TagContact *c = getContactDetail(wxid);
+            NSString *name = c ? (c.remark ?: c.nickName ?: wxid) : wxid;
+            [info appendFormat:@"• %@\n", name];
         }
         
-        [hierarchy appendFormat:@"\nview.frame: %@", NSStringFromCGRect(myView.frame)];
-        
-        // 获取联系人数量
-        NSArray<TagContact *> *contacts = getContactsForTag(kTargetTagName);
-        [hierarchy appendFormat:@"\n\n%@标签联系人: %lu人", kTargetTagName, (unsigned long)contacts.count];
-        
-        // 尝试添加一个简单的测试视图
-        UIView *testView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, myView.frame.size.width, 60)];
-        testView.backgroundColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.0 alpha:0.8]; // 橙色
-        testView.tag = 202420;
-        
-        UILabel *testLabel = [[UILabel alloc] initWithFrame:testView.bounds];
-        testLabel.text = [NSString stringWithFormat:@"✅ Hook触发! %@标签%lu人", kTargetTagName, (unsigned long)contacts.count];
-        testLabel.textColor = [UIColor whiteColor];
-        testLabel.textAlignment = NSTextAlignmentCenter;
-        testLabel.font = [UIFont systemFontOfSize:16];
-        [testView addSubview:testLabel];
-        
-        [myView addSubview:testView];
-        
-        // 找到TableView并调整
-        for (UIView *subview in myView.subviews) {
-            if ([subview isKindOfClass:[UITableView class]]) {
-                CGRect frame = subview.frame;
-                [hierarchy appendFormat:@"\n\n找到TableView: %@", NSStringFromCGRect(frame)];
-                frame.origin.y = 70; // 移到测试视图下方
-                frame.size.height -= 70;
-                subview.frame = frame;
-                [hierarchy appendFormat:@"\n调整后: %@", NSStringFromCGRect(frame)];
-                break;
+        // 如果找到联系人，创建 UI
+        if (wxids.count > 0) {
+            [info appendFormat:@"\n正在创建UI..."];
+            
+            // 创建标签分组视图
+            UIView *container = [[UIView alloc] init];
+            container.backgroundColor = [UIColor whiteColor];
+            container.tag = 202421;
+            
+            // 标签头
+            UILabel *header = [[UILabel alloc] init];
+            header.text = [NSString stringWithFormat:@"📋 %@ (%lu人)", kTargetTagName, (unsigned long)wxids.count];
+            header.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+            header.textColor = [UIColor darkTextColor];
+            header.frame = CGRectMake(15, 10, 200, 20);
+            [container addSubview:header];
+            
+            // 横向滚动视图
+            UIScrollView *scroll = [[UIScrollView alloc] init];
+            scroll.showsHorizontalScrollIndicator = NO;
+            scroll.frame = CGRectMake(0, 35, myView.frame.size.width, 80);
+            [container addSubview:scroll];
+            
+            CGFloat x = 15;
+            CGFloat cellW = 65;
+            
+            for (NSString *wxid in wxids) {
+                TagContact *c = getContactDetail(wxid);
+                if (!c) continue;
+                
+                NSString *displayName = c.remark ?: c.nickName ?: wxid;
+                if ([displayName length] > 5) {
+                    displayName = [[displayName substringToIndex:5] stringByAppendingString:@"…"];
+                }
+                
+                UIView *cell = [[UIView alloc] initWithFrame:CGRectMake(x, 0, cellW, 75)];
+                
+                UIView *avatar = [[UIView alloc] initWithFrame:CGRectMake((cellW-45)/2, 0, 45, 45)];
+                avatar.backgroundColor = [UIColor colorWithRed:0.13 green:0.59 blue:0.33 alpha:1.0];
+                avatar.layer.cornerRadius = 22.5;
+                [cell addSubview:avatar];
+                
+                NSString *firstChar = @"?";
+                if (c.nickName && [c.nickName length] > 0) {
+                    unichar ch = [c.nickName characterAtIndex:0];
+                    firstChar = [NSString stringWithCharacters:&ch length:1];
+                }
+                
+                UILabel *charLabel = [[UILabel alloc] initWithFrame:avatar.bounds];
+                charLabel.text = [firstChar uppercaseString];
+                charLabel.textColor = [UIColor whiteColor];
+                charLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightMedium];
+                charLabel.textAlignment = NSTextAlignmentCenter;
+                [avatar addSubview:charLabel];
+                
+                UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 50, cellW, 20)];
+                nameLabel.text = displayName;
+                nameLabel.font = [UIFont systemFontOfSize:10];
+                nameLabel.textColor = [UIColor darkGrayColor];
+                nameLabel.textAlignment = NSTextAlignmentCenter;
+                [cell addSubview:nameLabel];
+                
+                cell.accessibilityIdentifier = wxid;
+                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:cell action:@selector(handleTap:)];
+                [cell addGestureRecognizer:tap];
+                
+                [scroll addSubview:cell];
+                x += cellW + 10;
+            }
+            
+            scroll.contentSize = CGSizeMake(x, 80);
+            container.frame = CGRectMake(0, 0, myView.frame.size.width, 120);
+            
+            [myView addSubview:container];
+            
+            // 调整 TableView
+            for (UIView *subview in myView.subviews) {
+                if ([subview isKindOfClass:[UITableView class]]) {
+                    CGRect frame = subview.frame;
+                    frame.origin.y = 125;
+                    frame.size.height -= 125;
+                    subview.frame = frame;
+                    break;
+                }
             }
         }
         
-        showDebugAlert(@"WeChatTagGroup v20", hierarchy);
+        showDebugAlert(@"WeChatTagGroup v21", info);
     });
 }
 
 %end
 
+#pragma mark - Cell点击
+
+@interface UIView (TagGroupTapV21)
+- (void)handleTap:(UITapGestureRecognizer *)tap;
+@end
+
+@implementation UIView (TagGroupTapV21)
+- (void)handleTap:(UITapGestureRecognizer *)tap {
+    @try {
+        NSString *wxid = self.accessibilityIdentifier;
+        if (!wxid || [wxid length] == 0) return;
+        
+        // 打开聊天
+        Class serviceCenterClass = NSClassFromString(@"MMServiceCenter");
+        if (!serviceCenterClass) return;
+        
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        id serviceCenter = [serviceCenterClass performSelector:@selector(defaultCenter)];
+        if (!serviceCenter) return;
+        
+        Class msgMgrClass = NSClassFromString(@"CMessageMgr");
+        if (!msgMgrClass) return;
+        
+        id msgMgr = [serviceCenter performSelector:@selector(getService:) withObject:msgMgrClass];
+        if (!msgMgr) return;
+        
+        SEL openSel = NSSelectorFromString(@"openChatViewControllerWithUsername:");
+        if ([msgMgr respondsToSelector:openSel]) {
+            [msgMgr performSelector:openSel withObject:wxid];
+        }
+        #pragma clang diagnostic pop
+        
+    } @catch (NSException *e) {
+        NSLog(@"[WeChatTagGroup] handleTap error: %@", e);
+    }
+}
+@end
+
 %ctor {
-    NSLog(@"[WeChatTagGroup] v20调试版已加载");
+    NSLog(@"[WeChatTagGroup] v21调试版已加载");
 }
